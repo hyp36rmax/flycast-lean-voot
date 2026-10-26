@@ -34,7 +34,9 @@
 #if FC_PROFILER
 #include "implot.h"
 #endif
+#ifndef OT_LEAN_RUNTIME
 #include "boxart/boxart.h"
+#endif
 #include "profiler/fc_profiler.h"
 #include "hw/naomi/card_reader.h"
 #include "oslib/resources.h"
@@ -88,7 +90,9 @@ static bool clearActiveIdNextFrame;
 
 GameScanner scanner;
 static BackgroundGameLoader gameLoader;
+#ifndef OT_LEAN_RUNTIME
 static Boxart boxart;
+#endif
 static Chat chat;
 static std::recursive_mutex guiMutex;
 using LockGuard = std::lock_guard<std::recursive_mutex>;
@@ -544,6 +548,7 @@ static void gui_display_commands()
 		bool lowHeight = ImGui::GetContentRegionAvail().y < uiScaled(100 + 50 * 2 + buttonWidth * 3 / 4) + ImGui::GetTextLineHeightWithSpacing() * 2
 				+ ImGui::GetStyle().ItemSpacing.y * 2 + ImGui::GetStyle().WindowPadding.y;
 
+#ifndef OT_LEAN_RUNTIME
 		GameMedia game;
 		game.path = settings.content.path;
 		game.fileName = settings.content.fileName;
@@ -567,6 +572,16 @@ static void gui_display_commands()
 			}
 			ImGui::EndChild();
 		}
+
+#else
+		if (!lowHeight)
+		{
+			ImGui::BeginChild("game_info", ScaledVec2(0, 100.f), ImGuiChildFlags_Borders, ImGuiWindowFlags_NoScrollbar);
+			ImGui::TextWrapped("%s", settings.content.title.c_str());
+			ImGui::TextWrapped("%s", settings.content.fileName.c_str());
+			ImGui::EndChild();
+		}
+#endif
 
 		if (lowWidth) {
 			ImGui::Columns(3, "buttons", false);
@@ -929,6 +944,7 @@ static void gui_display_content()
 	// Only if Filter and Settings aren't focused... ImGui::SetNextWindowFocus();
 	ImGui::BeginChild(ImGui::GetID("library"), ImVec2(0, 0), ImGuiChildFlags_Borders | ImGuiChildFlags_NavFlattened, ImGuiWindowFlags_DragScrolling);
     {
+#ifndef OT_LEAN_RUNTIME
 		const float totalWidth = ImGui::GetContentRegionMax().x - (!ImGui::GetCurrentWindow()->ScrollbarY ? ImGui::GetStyle().ScrollbarSize : 0);
 		const int itemsPerLine = std::max<int>(totalWidth / (uiScaled(150) + ImGui::GetStyle().ItemSpacing.x), 1);
 		const float responsiveBoxSize = totalWidth / itemsPerLine - ImGui::GetStyle().FramePadding.x * 2;
@@ -940,6 +956,10 @@ static void gui_display_content()
 			ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ScaledVec2(8, 20));
 
 		int counter = 0;
+#else
+		// Ignore saved artwork preferences: lean browsing always uses the existing text list.
+		ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ScaledVec2(8, 20));
+#endif
 		bool gameListEmpty = false;
 		{
 			scanner.get_mutex().lock();
@@ -959,6 +979,7 @@ static void gui_display_content()
 				}
 				std::string gameName = game.name;
 				bool passFilter = filter.PassFilter(gameName.c_str());
+#ifndef OT_LEAN_RUNTIME
 				GameBoxart art;
 				if (config::BoxartDisplayMode && !game.device)
 				{
@@ -966,10 +987,12 @@ static void gui_display_content()
 					gameName = art.name;
 					passFilter = passFilter || filter.PassFilter(gameName.c_str());
 				}
+#endif
 				if (passFilter)
 				{
 					ImguiID _(game.path.empty() ? "bios" : game.path);
 					bool pressed = false;
+#ifndef OT_LEAN_RUNTIME
 					if (config::BoxartDisplayMode)
 					{
 						if (counter % itemsPerLine != 0)
@@ -985,14 +1008,19 @@ static void gui_display_content()
 						}
 					}
 					else
+#endif
 					{
 						pressed = ImGui::Selectable(gameName.c_str());
 					}
 					if (pressed)
 					{
+#ifndef OT_LEAN_RUNTIME
 						if (!config::BoxartDisplayMode)
 							art = boxart.getBoxart(game);
 						settings.content.title = art.name;
+#else
+						settings.content.title = game.name;
+#endif
 						if (settings.content.title.empty() || settings.content.title == game.fileName)
 							settings.content.title = get_file_basename(game.fileName);
 						if (gui_state == GuiState::SelectDisk)
@@ -1107,6 +1135,7 @@ static void gui_display_onboarding()
 	select_file_popup(title, &systemdir_selected_callback);
 }
 
+#ifndef OT_LEAN_RUNTIME
 static void drawBoxartBackground()
 {
 	GameMedia game;
@@ -1117,12 +1146,15 @@ static void drawBoxartBackground()
 	ImDrawList *dl = ImGui::GetBackgroundDrawList();
 	tex.draw(dl, ImVec2(0, 0), ImVec2(settings.display.width, settings.display.height), 1.f);
 }
+#endif
 
 static std::future<bool> networkStatus;
 
 static void gui_network_start()
 {
+#ifndef OT_LEAN_RUNTIME
 	drawBoxartBackground();
+#endif
 	centerNextWindow();
 	ImGui::SetNextWindowSize(ScaledVec2(360, 0));
 	ImGui::SetNextWindowBgAlpha(0.8f);
@@ -1241,7 +1273,9 @@ static bool checkUWPProtocolActivation()
 
 static void gui_display_loadscreen()
 {
+#ifndef OT_LEAN_RUNTIME
 	drawBoxartBackground();
+#endif
 	centerNextWindow();
 	ImGui::SetNextWindowSize(ScaledVec2(330, 0));
 	ImGui::SetNextWindowBgAlpha(0.8f);
@@ -1541,7 +1575,9 @@ void gui_term()
 	    EventManager::unlisten(Event::Resume, emuEventCallback);
 	    EventManager::unlisten(Event::Start, emuEventCallback);
 	    EventManager::unlisten(Event::Terminate, emuEventCallback);
+#ifndef OT_LEAN_RUNTIME
 	    boxart.term();
+#endif
 	}
 }
 
@@ -1664,11 +1700,16 @@ void gui_setState(GuiState newState)
 
 std::string gui_getCurGameBoxartUrl()
 {
+#ifndef OT_LEAN_RUNTIME
 	GameMedia game;
 	game.fileName = settings.content.fileName;
 	game.path = settings.content.path;
 	GameBoxart art = boxart.getBoxart(game);
 	return art.boxartUrl;
+#else
+	// Discord accepts an empty URL when frontend artwork is unavailable.
+	return {};
+#endif
 }
 
 void gui_runOnUiThread(std::function<void()> function) {

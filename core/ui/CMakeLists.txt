@@ -23,7 +23,12 @@ if(NOT LIBRETRO)
             settings_controls.cpp
             settings_general.cpp
             settings_network.cpp
-            settings_video.cpp
+            settings_video.cpp)
+
+    if(OT_LEAN_RUNTIME)
+        target_compile_definitions(${PROJECT_NAME} PRIVATE OT_LEAN_RUNTIME)
+    else()
+        target_sources(${PROJECT_NAME} PRIVATE
             boxart/arcade_scraper.h
             boxart/boxart.cpp
             boxart/boxart.h
@@ -32,6 +37,7 @@ if(NOT LIBRETRO)
             boxart/pvrparser.h
             boxart/scraper.cpp
             boxart/scraper.h)
+    endif()
 
     if(USE_DISCORD)
         target_sources(${PROJECT_NAME} PRIVATE discord.cpp)

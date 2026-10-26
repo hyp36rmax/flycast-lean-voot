@@ -76,6 +76,8 @@ if(NOT APPLE AND (NOT UNIX OR CMAKE_SYSTEM_NAME MATCHES "DragonFly|FreeBSD|OpenB
 	set(USE_HOST_SDL_DEFAULT ON)
 endif()
 
+option(OT_LEAN_RUNTIME "Exclude frontend box art and scraping" OFF)
+
 option(ENABLE_CTEST "Enables unit tests" OFF)
 option(ENABLE_OPROFILE "Enable OProfile" OFF)
 option(TEST_AUTOMATION "Enable test automation" OFF)

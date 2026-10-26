@@ -363,10 +363,12 @@ void gui_settings_general()
     }
 #endif
     ImGui::Spacing();
+#ifndef OT_LEAN_RUNTIME
 	OptionCheckbox(T("Box Art Game List"), config::BoxartDisplayMode,
 			T("Display game cover art in the game list."));
 	OptionCheckbox(T("Fetch Box Art"), config::FetchBoxart,
 			T("Fetch cover images from TheGamesDB.net."));
+#endif
 	if (OptionSlider(T("UI Scaling"), config::UIScaling, 50, 200, T("Adjust the size of UI elements and fonts."), "%d%%"))
 		uiUserScaleUpdated = true;
 	if (uiUserScaleUpdated)
@@ -490,9 +492,11 @@ void gui_settings_general()
     		T("Folder where texture dumps are saved. Game-specific subfolders will be created automatically"));
     ImGui::Spacing();
     
+#ifndef OT_LEAN_RUNTIME
     manageSinglePath(T("Box Art Folder"), T("Select the box art folder"), config::BoxartPath,
     		T("Folder containing box art images (png/jpg). If empty, Flycast will use the default Home Folder/boxart for downloads and generated art"));
     ImGui::Spacing();
+#endif
 
     managePathList(T("Controller Mapping Folders"), T("Select a controller mapping folder"), config::MappingsPath.get(),
     		T("Folders containing controller mapping files (.cfg). The emulator also looks in Home Folder/mappings. Per-game mappings are suffixed with _<gameId>.cfg"));
