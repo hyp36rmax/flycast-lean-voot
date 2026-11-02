@@ -1,4 +1,6 @@
 #include "Renderer_if.h"
+#include "rend/frame_delivery_trace.h"
+#include "hosted_startup.h"
 #include "spg.h"
 #include "rend/texconv.h"
 #include "rend/transform_matrix.h"
@@ -12,6 +14,12 @@
 #include "profiler/fc_profiler.h"
 #include "network/ggpo.h"
 
+#if defined(FLYCAST_VOOT_RENDER_DIAGNOSTICS) && defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 #include <mutex>
 #include <deque>
 
@@ -53,6 +61,9 @@ public:
 			: type(type), config(config) {}
 
 		MessageType type = NoMessage;
+#ifdef FLYCAST_VOOT_RENDER_DIAGNOSTICS
+		uint64_t queuedAt = 0;
+#endif
 		FramebufferInfo config;
 	};
 
@@ -94,11 +105,20 @@ public:
 								if (it->type == Present)
 								{
 									queue.erase(it);
+#ifdef FLYCAST_VOOT_RENDER_DIAGNOSTICS
+									++frame_delivery_trace::droppedPresent;
+#endif
 									break;
 								}
 							}
 						}
+						#ifdef FLYCAST_VOOT_RENDER_DIAGNOSTICS
+						if (frame_delivery_trace::enabled()) msg.queuedAt = frame_delivery_trace::ticks();
+#endif
 						queue.push_back(msg);
+#ifdef FLYCAST_VOOT_RENDER_DIAGNOSTICS
+						frame_delivery_trace::maxDepth.store(std::max(frame_delivery_trace::maxDepth.load(), (unsigned)queue.size()));
+#endif
 						dupe = false;
 					}
 				}
@@ -106,7 +126,13 @@ public:
 				{
 					if (type == Stop)
 						return;
+					#ifdef FLYCAST_VOOT_RENDER_DIAGNOSTICS
+					const auto waitStart = frame_delivery_trace::enabled() ? frame_delivery_trace::ticks() : 0;
+#endif
 					dequeueEvent.Wait();
+#ifdef FLYCAST_VOOT_RENDER_DIAGNOSTICS
+					if (waitStart) frame_delivery_trace::producerWait.fetch_add(frame_delivery_trace::ticks() - waitStart);
+#endif
 				}
 			} while (dupe);
 			enqueueEvent.Set();
@@ -157,6 +183,16 @@ private:
 				if (!queue.empty())
 				{
 					msg = queue.front();
+#ifdef FLYCAST_VOOT_RENDER_DIAGNOSTICS
+					if (msg.queuedAt) {
+						const auto age = frame_delivery_trace::ticks() - msg.queuedAt;
+						if (msg.type == Render) {
+							frame_delivery_trace::renderAge.store(age);
+							frame_delivery_trace::renderQueuedAt.store(msg.queuedAt);
+						}
+
+					}
+#endif
 					queue.pop_front();
 				}
 			}
@@ -183,7 +219,11 @@ private:
 			renderFramebuffer(msg.config);
 			return true;
 		case Present:
+#ifdef FLYCAST_VOOT_RENDER_DIAGNOSTICS
+			present(msg.queuedAt ? frame_delivery_trace::ticks() - msg.queuedAt : 0);
+#else
 			present();
+#endif
 			return true;
 		case Stop:
 		case NoMessage:
@@ -200,6 +240,9 @@ private:
 		if (taContext == nullptr)
 			return;
 
+		#ifdef FLYCAST_VOOT_RENDER_DIAGNOSTICS
+		++frame_delivery_trace::renders;
+#endif
 		int width, height;
 		getScaledFramebufferSize(taContext->rend, width, height);
 		taContext->rend.framebufferWidth = width;
@@ -230,6 +273,7 @@ private:
 			FC_PROFILE_SCOPE_NAMED("Renderer::Render");
 			try {
 				renderer->Render();
+				if (renderToScreen) hosted_startup::frame_submitted();
 			} catch (...) {
 				if (!renderToScreen)
 					renderEnd.Set();
@@ -257,15 +301,24 @@ private:
 		retro_resize_renderer(w, h, getDCFramebufferAspectRatio());
 #endif
 		renderer->RenderFramebuffer(config);
+		hosted_startup::frame_submitted();
 	}
 
-	void present()
+	void present(
+#ifdef FLYCAST_VOOT_RENDER_DIAGNOSTICS
+		uint64_t queuedAge = 0
+#endif
+	)
 	{
 		FC_PROFILE_SCOPE;
 
 		if (renderer->Present())
 		{
 			presented = true;
+#ifdef FLYCAST_VOOT_RENDER_DIAGNOSTICS
+			++frame_delivery_trace::presents;
+			frame_delivery_trace::presentAge.store(queuedAge);
+#endif
 			if (!config::ThreadedRendering && !ggpo::active())
 				emu.getSh4Executor()->Stop();
 #ifdef LIBRETRO
@@ -496,6 +549,9 @@ void rend_reset()
 
 void rend_start_render()
 {
+#if defined(FLYCAST_VOOT_RENDER_DIAGNOSTICS) && defined(_WIN32)
+	frame_delivery_trace::emulationThreadId.store(GetCurrentThreadId(), std::memory_order_relaxed);
+#endif
 	render_called = true;
 	pend_rend = false;
 
@@ -565,7 +621,15 @@ void rend_start_render()
 			ctx->rend.swapInterval = 1;
 	}
 
-	if (QueueRender(ctx))
+	#ifdef FLYCAST_VOOT_RENDER_DIAGNOSTICS
+	const auto queueStart = frame_delivery_trace::enabled() ? frame_delivery_trace::ticks() : 0;
+#endif
+	const bool queued = QueueRender(ctx);
+#ifdef FLYCAST_VOOT_RENDER_DIAGNOSTICS
+	if (queueStart) frame_delivery_trace::frameWait.fetch_add(frame_delivery_trace::ticks() - queueStart);
+	if (!queued && rend_is_enabled()) ++frame_delivery_trace::skippedRender;
+#endif
+	if (queued)
 	{
 		palette_update();
 		pend_rend = true;
@@ -589,8 +653,15 @@ int rend_end_render(int tag, int cycles, int jitter, void *arg)
 		asic_RaiseInterrupt(holly_RENDER_DONE_isp);
 		asic_RaiseInterrupt(holly_RENDER_DONE_vd);
 	}
-	if (pend_rend && config::ThreadedRendering)
+	if (pend_rend && config::ThreadedRendering) {
+#ifdef FLYCAST_VOOT_RENDER_DIAGNOSTICS
+		const auto waitStart = frame_delivery_trace::enabled() ? frame_delivery_trace::ticks() : 0;
+#endif
 		renderEnd.Wait();
+#ifdef FLYCAST_VOOT_RENDER_DIAGNOSTICS
+		if (waitStart) frame_delivery_trace::renderWait.fetch_add(frame_delivery_trace::ticks() - waitStart);
+#endif
+	}
 
 	return 0;
 }

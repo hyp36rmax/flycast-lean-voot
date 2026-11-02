@@ -1359,6 +1359,8 @@ static void gui_display_loadscreen()
     ImGui::End();
 }
 
+#include "hosted_startup.h"
+
 void gui_display_ui()
 {
 	FC_PROFILE_SCOPE;
@@ -1440,7 +1442,7 @@ void gui_display_ui()
 	}
 	error_popup();
     ImGui::Render();
-	gui_endFrame(gui_open);
+	if (!hosted_startup::enabled()) gui_endFrame(gui_open);
 	uiThreadRunner.execTasks();
 	ImguiFileTexture::resetLoadCount();
 
@@ -1474,6 +1476,7 @@ static std::string getFPSNotification()
 
 void gui_draw_osd()
 {
+	if (hosted_startup::enabled()) { uiThreadRunner.execTasks(); return; }
 	gui_newFrame();
 	ImGui::NewFrame();
 
@@ -1517,6 +1520,7 @@ void gui_draw_osd()
 }
 
 void gui_display_osd() {
+	if (hosted_startup::enabled()) { uiThreadRunner.execTasks(); return; }
 	gui_draw_osd();
 	gui_endFrame(gui_is_open());
 }

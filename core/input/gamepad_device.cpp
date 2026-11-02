@@ -18,6 +18,7 @@
  */
 
 #include "gamepad_device.h"
+#include "hosted_startup.h"
 #include "cfg/cfg.h"
 #include "stdclass.h"
 #include "ui/gui.h"
@@ -75,6 +76,8 @@ void GamepadDevice::emuEvent(Event event, void *arg) {
 
 bool GamepadDevice::handleButtonInput(int port, DreamcastKey key, bool pressed)
 {
+	if (!hosted_startup::accepts_input()) return false;
+	if (hosted_startup::enabled() && key > DC_BTN_BITMAPPED_LAST) return false;
 	if (key == EMU_BTN_NONE)
 		return false;
 
@@ -355,6 +358,7 @@ bool GamepadDevice::detectAxis(u32 code, int value)
 //
 bool GamepadDevice::gamepad_axis_input(u32 code, int value)
 {
+	if (!hosted_startup::accepts_input()) return false;
 	if (detectAxis(code, value))
 		return true;
 

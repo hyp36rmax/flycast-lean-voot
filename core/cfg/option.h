@@ -436,6 +436,7 @@ extern Option<bool> UseMipmaps;
 extern Option<bool> Widescreen;
 extern Option<bool> SuperWidescreen;
 extern Option<bool> VootWidescreenClipping;
+extern Option<bool> Dx11LimitFrameLatency;
 extern Option<bool> ShowFPS;
 extern Option<bool> RenderToTextureBuffer;
 extern Option<bool> TranslucentPolygonDepthMask;

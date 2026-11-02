@@ -46,6 +46,9 @@
 #include "profiler/fc_profiler.h"
 
 #include <nowide/args.hpp>
+#ifdef FLYCAST_HOSTED_STARTUP
+#include <nowide/cstdlib.hpp>
+#endif
 #include <nowide/stackstring.hpp>
 #include <exception>
 
@@ -70,10 +73,27 @@ static void setupPath()
 		fn = fn.substr(0, pos) + "\\";
 	else
 		fn = ".\\";
+	std::string data_path = fn + "data\\";
+#ifdef FLYCAST_HOSTED_STARTUP
+	// A hosted executable may live in a disposable binary cache. Persistent paths
+	// remain explicitly owned by the host; ordinary standalone startup is unchanged.
+	auto environment = [](const char* key) { const char* value = nowide::getenv(key); return value ? std::string(value) : std::string(); };
+	// nowide::getenv reuses one buffer: own each UTF-8 value before the next read.
+	const std::string hostConfig = environment("FLYCAST_HOST_CONFIG_DIR");
+	const std::string hostData = environment("FLYCAST_HOST_DATA_DIR");
+	if (!hostConfig.empty() || !hostData.empty()) {
+		auto absolute = [](const char* path) {
+			return path && ((std::strlen(path) > 2 && path[1] == ':' && (path[2] == '\\' || path[2] == '/'))
+				|| (std::strlen(path) > 1 && path[0] == '\\' && path[1] == '\\'));
+		};
+		if (!absolute(hostConfig.c_str()) || !absolute(hostData.c_str())) throw FlycastException("Hosted config/data directories must be absolute.");
+		fn = hostConfig; data_path = hostData;
+		if (fn.back() != '\\' && fn.back() != '/') fn += '\\';
+		if (data_path.back() != '\\' && data_path.back() != '/') data_path += '\\';
+	}
+#endif
 	set_user_config_dir(fn);
 	add_system_data_dir(fn);
-
-	std::string data_path = fn + "data\\";
 	set_user_data_dir(data_path);
 	flycast::mkdir(data_path.c_str(), 0755);
 #else

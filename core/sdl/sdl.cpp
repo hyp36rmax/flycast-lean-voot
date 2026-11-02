@@ -12,6 +12,7 @@
 #endif
 #include "hw/maple/maple_devs.h"
 #include "sdl_gamepad.h"
+#include "hosted_startup.h"
 #include "sdl_keyboard.h"
 #include "sdl_keyboard_mac.h"
 #include "wsi/context.h"
@@ -325,6 +326,7 @@ static std::shared_ptr<SDLMouse> getMouse(u32 mouseId)
 
 void input_sdl_handle()
 {
+	hosted_startup::poll(window);
 	SDLGamepad::UpdateRumble();
 
 	SDL_Event event;
@@ -338,6 +340,10 @@ void input_sdl_handle()
 
 			case SDL_KEYDOWN:
 			case SDL_KEYUP:
+				if (hosted_startup::enabled()) {
+					if (!config::UseRawInput) sdl_keyboard->input(event.key.keysym.scancode, event.type == SDL_KEYDOWN);
+					break;
+				}
 				checkRawInput();
 				if (event.key.repeat == 0)
 				{
@@ -699,6 +705,7 @@ HWND getNativeHwnd()
 
 bool sdl_recreate_window(u32 flags)
 {
+	if (!hosted_startup::initialize()) return false;
 	windowFlags = flags;
 #ifdef _WIN32
     //Enable HiDPI mode in Windows
@@ -821,6 +828,7 @@ bool sdl_recreate_window(u32 flags)
 #endif
 	if (window != nullptr)
 	{
+		hosted_startup::window_destroying(window);
 		SDL_DestroyWindow(window);
 		window = nullptr;
 	}
@@ -835,6 +843,12 @@ bool sdl_recreate_window(u32 flags)
 	flags |= SDL_WINDOW_FULLSCREEN;
 #endif
 
+	if (hosted_startup::enabled()) {
+		flags &= ~(SDL_WINDOW_FULLSCREEN_DESKTOP | SDL_WINDOW_MAXIMIZED);
+		flags |= SDL_WINDOW_BORDERLESS | SDL_WINDOW_SKIP_TASKBAR;
+		if (!hosted_startup::accepts_input()) flags |= SDL_WINDOW_HIDDEN;
+	}
+	windowFlags = flags;
 	window = SDL_CreateWindow("Flycast", windowPos.x, windowPos.y,
 			windowPos.w * hdpiScaling, windowPos.h * hdpiScaling, flags);
 	if (window == nullptr)
@@ -843,6 +857,7 @@ bool sdl_recreate_window(u32 flags)
 		return false;
 	}
 	settings.display.width = windowPos.w * hdpiScaling;
+	hosted_startup::window_created(window);
 	settings.display.height = windowPos.h * hdpiScaling;
 
 #ifdef __linux__
@@ -994,6 +1009,7 @@ void sdl_window_destroy()
 	}
 #endif
 	termRenderApi();
+	hosted_startup::window_destroying(window);
 	SDL_DestroyWindow(window);
 	window = nullptr;
 	SDL_QuitSubSystem(SDL_INIT_VIDEO);

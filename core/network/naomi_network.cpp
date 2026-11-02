@@ -30,6 +30,25 @@ using namespace i18n;
 
 NaomiNetwork naomiNetwork;
 
+#ifdef _WIN32
+bool NaomiNetwork::waitForData(std::chrono::microseconds timeout)
+{
+	if (!receivedData.empty())
+		return true;
+	if (timeout.count() <= 0)
+		return false;
+	fd_set readable;
+	FD_ZERO(&readable);
+	FD_SET(sock, &readable);
+	timeval limit { static_cast<long>(timeout.count() / 1000000),
+		static_cast<long>(timeout.count() % 1000000) };
+	const int ready = select(0, &readable, nullptr, nullptr, &limit);
+	if (ready < 0)
+		throw Exception("Receive wait failed: errno " + std::to_string(get_last_error()));
+	return ready != 0;
+}
+#endif
+
 bool NaomiNetwork::init()
 {
 	if (!config::NetworkEnable)

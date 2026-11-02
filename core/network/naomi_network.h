@@ -25,6 +25,7 @@
 #include "oslib/oslib.h"
 
 #include <algorithm>
+#include <chrono>
 #include <atomic>
 #include <future>
 #include <vector>
@@ -76,6 +77,10 @@ public:
 
 		return true;
 	}
+
+#ifdef _WIN32
+	bool waitForData(std::chrono::microseconds timeout);
+#endif
 
 	void send(u8 *data, u32 size, u16 packetNumber)
 	{

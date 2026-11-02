@@ -17,6 +17,11 @@
     along with Flycast.  If not, see <https://www.gnu.org/licenses/>.
  */
 #include "ta_ctx.h"
+#include "ta_triangle_sort.h"
+#ifdef FLYCAST_VOOT_RENDER_DIAGNOSTICS
+#include <cstdlib>
+#include <chrono>
+#endif
 #include "pvr_mem.h"
 #include <algorithm>
 #include <glm/glm.hpp>
@@ -33,28 +38,11 @@ static bool is_vertex_inf(const Vertex& vtx)
 			|| std::isnan(vtx.z) || vtx.z > 3.4e37f;
 }
 
-struct IndexTrig
-{
-	IndexTrig() = default;
-	IndexTrig(u32 pid, u32 v0, u32 v1, u32 v2) : pid(pid), z(0) {
-		vid[0] = v0;
-		vid[1] = v1;
-		vid[2] = v2;
-	}
-
-	u32 vid[3];
-	u32 pid;
-	f32 z;
-};
+using IndexTrig = pvr::TriangleSortEntry;
 
 static float minZ(const Vertex *v, const u32 *mod)
 {
 	return std::min(std::min(v[mod[0]].z, v[mod[1]].z), v[mod[2]].z);
-}
-
-static bool operator<(const IndexTrig& left, const IndexTrig& right)
-{
-	return left.z < right.z;
 }
 
 static float getProjectedZ(const Vertex *v, const float *mat)
@@ -130,7 +118,20 @@ void sortTriangles(rend_context& ctx, RenderPass& pass, const RenderPass& previo
 	}
 
 	//sort them
-	std::stable_sort(triangleList.begin(), triangleList.end());
+#ifdef FLYCAST_VOOT_RENDER_DIAGNOSTICS
+	const auto sortStart = std::chrono::steady_clock::now();
+	pvr::depthSortStats.triangles += triangleList.size();
+#endif
+	static std::vector<IndexTrig> sortScratch;
+#ifdef FLYCAST_VOOT_RENDER_DIAGNOSTICS
+	static const bool baselineSort = std::getenv("FLYCAST_PVR_BASELINE_SORT") != nullptr;
+	if (baselineSort) {++pvr::depthSortStats.standardCalls; std::stable_sort(triangleList.begin(), triangleList.end());}
+	else
+#endif
+		pvr::stableDepthSort(triangleList, sortScratch);
+#ifdef FLYCAST_VOOT_RENDER_DIAGNOSTICS
+	pvr::depthSortStats.ns += std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - sortStart).count();
+#endif
 
 	//Merge pids/draw cmds if two different pids are actually equal
 	for (size_t k = 1; k < triangleList.size(); k++)

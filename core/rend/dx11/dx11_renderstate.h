@@ -92,7 +92,7 @@ class DepthStencilStates
 public:
 	enum ModifierVolumeMode { Xor, Or, Inclusion, Exclusion, Final, Count };
 
-	ComPtr<ID3D11DepthStencilState> getState(bool depth, bool depthWrite, int depthFunc, bool stencil)
+	const ComPtr<ID3D11DepthStencilState>& getState(bool depth, bool depthWrite, int depthFunc, bool stencil)
 	{
 		int hash = (depthFunc << 3) | (int)depth | ((int)depthWrite << 1) | ((int)stencil << 2);
 		auto& state = states[hash];
@@ -184,7 +184,7 @@ private:
 class BlendStates
 {
 public:
-	ComPtr<ID3D11BlendState> getState(bool enable, int srcBlend = 0, int destBlend = 0, bool disableWrite = false)
+	const ComPtr<ID3D11BlendState>& getState(bool enable, int srcBlend = 0, int destBlend = 0, bool disableWrite = false)
 	{
 		int hash = (int)enable | (srcBlend << 1) | (destBlend << 5) | ((int)disableWrite << 9);
 		auto& state = states[hash];

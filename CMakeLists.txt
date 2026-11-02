@@ -79,7 +79,7 @@ endif()
 option(OT_LEAN_RUNTIME "Exclude frontend box art and scraping" OFF)
 option(FLYCAST_VOOT_RENDER_DIAGNOSTICS "Sample VOOT DX11 submission and clipping state" OFF)
 if(FLYCAST_VOOT_RENDER_DIAGNOSTICS)
-	set_property(SOURCE core/rend/dx11/dx11_renderer.cpp APPEND PROPERTY COMPILE_DEFINITIONS FLYCAST_VOOT_RENDER_DIAGNOSTICS)
+	set_property(SOURCE core/rend/dx11/dx11_renderer.cpp core/rend/dx11/dx11context.cpp core/hw/pvr/Renderer_if.cpp core/hw/pvr/ta_util.cpp core/hw/pvr/ta_vtx.cpp core/rend/TexCache.cpp core/hw/naomi/naomi_m3comm.cpp APPEND PROPERTY COMPILE_DEFINITIONS FLYCAST_VOOT_RENDER_DIAGNOSTICS)
 endif()
 
 option(ENABLE_CTEST "Enables unit tests" OFF)
@@ -286,6 +286,15 @@ endif()
 set_target_properties(${PROJECT_NAME} PROPERTIES
 		CMAKE_CXX_STANDARD 20
 		CMAKE_CXX_STANDARD_REQUIRED ON)
+
+option(FLYCAST_HOSTED_STARTUP "Experimental Windows hosted startup gates" OFF)
+if(FLYCAST_HOSTED_STARTUP)
+	if(NOT WIN32 OR WINDOWS_STORE OR LIBRETRO)
+		message(FATAL_ERROR "Hosted startup requires Windows desktop SDL")
+	endif()
+	target_sources(${PROJECT_NAME} PRIVATE core/hosted_startup.cpp)
+	target_compile_definitions(${PROJECT_NAME} PRIVATE FLYCAST_HOSTED_STARTUP)
+endif()
 
 if(WINDOWS_STORE)
 	set(USE_OPENGL OFF)

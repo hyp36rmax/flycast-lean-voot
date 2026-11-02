@@ -18,6 +18,8 @@
  */
 #include "net_handshake.h"
 #include "cfg/option.h"
+#include "cfg/cfg.h"
+#include "hosted_startup.h"
 #include "ggpo.h"
 #include "naomi_network.h"
 //#include "net_serial_maxspeed.h"
@@ -46,6 +48,14 @@ class NaomiNetworkHandshake : public NetworkHandshake
 public:
 	NaomiNetworkHandshake() {
 		auto max = naomiNetworkMaxNodes();
+		if (hosted_startup::enabled()) {
+			const int expected = config::loadInt("host", "CabinetCount", 0);
+			if (expected > 1 && expected <= max.first) {
+				// A host-owned pair need not wait for an optional satellite node.
+				NOTICE_LOG(NETWORK, "Hosted expected cabinet count: %d (supported maximum %d)", expected, max.first);
+				max.first = expected;
+			}
+		}
 		naomiNetwork.setMaxSlots(max.first, max.second);
 	}
 	std::future<bool> start() override {

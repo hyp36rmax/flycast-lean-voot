@@ -70,6 +70,7 @@ Option<bool> UseMipmaps("rend.UseMipmaps", true);
 Option<bool> Widescreen("rend.WideScreen");
 Option<bool> SuperWidescreen("rend.SuperWideScreen");
 Option<bool> VootWidescreenClipping("rend.VootWidescreenClipping", false);
+Option<bool> Dx11LimitFrameLatency("rend.Dx11LimitFrameLatency", true);
 Option<bool> ShowFPS("rend.ShowFPS");
 Option<bool> RenderToTextureBuffer("rend.RenderToTextureBuffer");
 Option<bool> TranslucentPolygonDepthMask("rend.TranslucentPolygonDepthMask");

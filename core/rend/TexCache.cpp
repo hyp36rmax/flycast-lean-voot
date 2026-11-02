@@ -15,6 +15,7 @@
     along with Flycast.  If not, see <https://www.gnu.org/licenses/>.
 */
 #include "TexCache.h"
+#include "hw/pvr/ta_parse_profile.h"
 #include "xbrz/xbrz.h"
 #include "hw/pvr/pvr_mem.h"
 #include "hw/mem/addrspace.h"
@@ -437,6 +438,9 @@ void BaseTextureCacheData::ComputeHash()
 
 bool BaseTextureCacheData::Update()
 {
+#ifdef FLYCAST_VOOT_RENDER_DIAGNOSTICS
+	const auto setupStart=pvr::parserProfileEnabled?pvr::parserTicks():0;
+#endif
 	//texture state tracking stuff
 	Updates++;
 	dirty = 0;
@@ -530,6 +534,10 @@ bool BaseTextureCacheData::Update()
 	u32 upscaled_w = width;
 	u32 upscaled_h = height;
 
+#ifdef FLYCAST_VOOT_RENDER_DIAGNOSTICS
+	const auto convertStart=pvr::parserProfileEnabled?pvr::parserTicks():0;
+	if(setupStart) pvr::parserProfile.setupNs+=convertStart-setupStart;
+#endif
 	PixelBuffer<u16> pb16;
 	PixelBuffer<u32> pb32;
 	PixelBuffer<u8> pb8;
@@ -676,10 +684,26 @@ bool BaseTextureCacheData::Update()
 		temp_tex_buffer = pb16.data();
 		mipmapped = false;
 	}
+#ifdef FLYCAST_VOOT_RENDER_DIAGNOSTICS
+	const auto protectStart=pvr::parserProfileEnabled?pvr::parserTicks():0;
+	if(convertStart) {
+		const auto elapsed=protectStart-convertStart;
+		pvr::parserProfile.convertNs+=elapsed;
+		(IsPaletted()?pvr::parserProfile.paletteConvertNs:pvr::parserProfile.directConvertNs)+=elapsed;
+		pvr::parserProfile.convertedPixels+=static_cast<std::uint64_t>(upscaled_w)*upscaled_h;
+	}
+#endif
 	//lock the texture to detect changes in it
 	protectVRam();
 
+#ifdef FLYCAST_VOOT_RENDER_DIAGNOSTICS
+	const auto uploadStart=pvr::parserProfileEnabled?pvr::parserTicks():0;
+	if(protectStart) pvr::parserProfile.protectNs+=uploadStart-protectStart;
+#endif
 	UploadToGPU(upscaled_w, upscaled_h, (const u8 *)temp_tex_buffer, IsMipmapped(), mipmapped);
+#ifdef FLYCAST_VOOT_RENDER_DIAGNOSTICS
+	if(uploadStart) pvr::parserProfile.uploadNs+=pvr::parserTicks()-uploadStart;
+#endif
 	if (config::DumpTextures)
 	{
 		ComputeHash();

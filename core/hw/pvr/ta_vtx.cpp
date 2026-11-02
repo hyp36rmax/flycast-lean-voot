@@ -5,6 +5,7 @@
 	Parsing of the TA stream and generation of vertex data !
 */
 #include "ta.h"
+#include "ta_parse_profile.h"
 #include "ta_ctx.h"
 #include "pvr_mem.h"
 #include "Renderer_if.h"
@@ -1223,12 +1224,18 @@ static void ta_parse_vdrc(TA_context* ctx, bool primRestart)
 	verify(vd_ctx == nullptr);
 	vd_ctx = ctx;
 
+#ifdef FLYCAST_VOOT_RENDER_DIAGNOSTICS
+	const auto resetStart=pvr::parserProfileEnabled?pvr::parserTicks():0;
+#endif
 	ta_parse_reset();
 
 	PolyParam *bgpp = &vd_rc.global_param_op.front();
 	if (bgpp->pcw.Texture)
 		bgpp->texture = renderer->GetTexture(bgpp->tsp, bgpp->tcw);
 
+#ifdef FLYCAST_VOOT_RENDER_DIAGNOSTICS
+	if(resetStart) pvr::parserProfile.resetNs+=pvr::parserTicks()-resetStart;
+#endif
 	TA_context *childCtx = ctx;
 	int pass = 0;
 	RenderPass previousPass{};
@@ -1238,6 +1245,10 @@ static void ta_parse_vdrc(TA_context* ctx, bool primRestart)
 		Ta_Dma* ta_data = (Ta_Dma *)childCtx->getTADataBegin();
 		Ta_Dma* ta_data_end = (Ta_Dma *)childCtx->getTADataEnd();
 
+#ifdef FLYCAST_VOOT_RENDER_DIAGNOSTICS
+		const auto decodeStart=pvr::parserProfileEnabled?pvr::parserTicks():0;
+		pvr::parserProfile.commandBytes+=reinterpret_cast<u8*>(ta_data_end)-reinterpret_cast<u8*>(ta_data);
+#endif
 		while (ta_data < ta_data_end)
 			try {
 				ta_data = BaseTAParser::TaCmd(ta_data, ta_data_end);
@@ -1245,6 +1256,10 @@ static void ta_parse_vdrc(TA_context* ctx, bool primRestart)
 				break;
 			}
 
+#ifdef FLYCAST_VOOT_RENDER_DIAGNOSTICS
+		const auto postStart=pvr::parserProfileEnabled?pvr::parserTicks():0;
+		if(decodeStart) pvr::parserProfile.decodeNs+=postStart-decodeStart;
+#endif
 		// Disable blending for opaque polys of the first pass
 		if (pass == 0)
 		{
@@ -1273,11 +1288,20 @@ static void ta_parse_vdrc(TA_context* ctx, bool primRestart)
 			parseRenderPass(render_pass, previousPass, vd_rc, primRestart);
 			previousPass = render_pass;
 		}
+#ifdef FLYCAST_VOOT_RENDER_DIAGNOSTICS
+		if(postStart) pvr::parserProfile.postNs+=pvr::parserTicks()-postStart;
+#endif
 		childCtx = childCtx->nextContext;
 		pass++;
 	}
 
+#ifdef FLYCAST_VOOT_RENDER_DIAGNOSTICS
+	const auto regionStart=pvr::parserProfileEnabled?pvr::parserTicks():0;
+#endif
 	setTileClipping(ctx->rend);
+#ifdef FLYCAST_VOOT_RENDER_DIAGNOSTICS
+	if(regionStart) pvr::parserProfile.regionNs+=pvr::parserTicks()-regionStart;
+#endif
 	vd_ctx = nullptr;
 }
 

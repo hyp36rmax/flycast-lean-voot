@@ -278,10 +278,10 @@ struct ConvertTwiddleYUV
 template<typename Pixel>
 struct UnpackerPalToRgb {
 	using unpacked_type = Pixel;
-	static Pixel unpack(u8 col)
+	const u32* palette = sizeof(Pixel) == 2 ? &palette16_ram[palette_index] : &palette32_ram[palette_index];
+	Pixel unpack(u8 col) const
 	{
-		u32 *pal = sizeof(Pixel) == 2 ? &palette16_ram[palette_index] : &palette32_ram[palette_index];
-		return pal[col];
+		return palette[col];
 	}
 };
 
@@ -289,31 +289,32 @@ template<typename Unpacker>
 struct ConvertTwiddlePal4
 {
 	using unpacked_type = typename Unpacker::unpacked_type;
+	Unpacker unpacker;
 	static constexpr u32 xpp = 4;
 	static constexpr u32 ypp = 4;
-	static void Convert(PixelBuffer<unpacked_type> *pb, const u8 *data)
+	void Convert(PixelBuffer<unpacked_type> *pb, const u8 *data)
 	{
 		const u8 *p_in = data;
 
-		pb->prel(0, 0, Unpacker::unpack(p_in[0] & 0xF));
-		pb->prel(0, 1, Unpacker::unpack((p_in[0] >> 4) & 0xF)); p_in++;
-		pb->prel(1, 0, Unpacker::unpack(p_in[0] & 0xF));
-		pb->prel(1, 1, Unpacker::unpack((p_in[0] >> 4) & 0xF)); p_in++;
+		pb->prel(0, 0, unpacker.unpack(p_in[0] & 0xF));
+		pb->prel(0, 1, unpacker.unpack((p_in[0] >> 4) & 0xF)); p_in++;
+		pb->prel(1, 0, unpacker.unpack(p_in[0] & 0xF));
+		pb->prel(1, 1, unpacker.unpack((p_in[0] >> 4) & 0xF)); p_in++;
 
-		pb->prel(0, 2, Unpacker::unpack(p_in[0] & 0xF));
-		pb->prel(0, 3, Unpacker::unpack((p_in[0] >> 4) & 0xF)); p_in++;
-		pb->prel(1, 2, Unpacker::unpack(p_in[0] & 0xF));
-		pb->prel(1, 3, Unpacker::unpack((p_in[0] >> 4) & 0xF)); p_in++;
+		pb->prel(0, 2, unpacker.unpack(p_in[0] & 0xF));
+		pb->prel(0, 3, unpacker.unpack((p_in[0] >> 4) & 0xF)); p_in++;
+		pb->prel(1, 2, unpacker.unpack(p_in[0] & 0xF));
+		pb->prel(1, 3, unpacker.unpack((p_in[0] >> 4) & 0xF)); p_in++;
 
-		pb->prel(2, 0, Unpacker::unpack(p_in[0] & 0xF));
-		pb->prel(2, 1, Unpacker::unpack((p_in[0] >> 4) & 0xF)); p_in++;
-		pb->prel(3, 0, Unpacker::unpack(p_in[0] & 0xF));
-		pb->prel(3, 1, Unpacker::unpack((p_in[0] >> 4) & 0xF)); p_in++;
+		pb->prel(2, 0, unpacker.unpack(p_in[0] & 0xF));
+		pb->prel(2, 1, unpacker.unpack((p_in[0] >> 4) & 0xF)); p_in++;
+		pb->prel(3, 0, unpacker.unpack(p_in[0] & 0xF));
+		pb->prel(3, 1, unpacker.unpack((p_in[0] >> 4) & 0xF)); p_in++;
 
-		pb->prel(2, 2, Unpacker::unpack(p_in[0] & 0xF));
-		pb->prel(2, 3, Unpacker::unpack((p_in[0] >> 4) & 0xF)); p_in++;
-		pb->prel(3, 2, Unpacker::unpack(p_in[0] & 0xF));
-		pb->prel(3, 3, Unpacker::unpack((p_in[0] >> 4) & 0xF)); p_in++;
+		pb->prel(2, 2, unpacker.unpack(p_in[0] & 0xF));
+		pb->prel(2, 3, unpacker.unpack((p_in[0] >> 4) & 0xF)); p_in++;
+		pb->prel(3, 2, unpacker.unpack(p_in[0] & 0xF));
+		pb->prel(3, 3, unpacker.unpack((p_in[0] >> 4) & 0xF)); p_in++;
 	}
 };
 
@@ -321,21 +322,22 @@ template<typename Unpacker>
 struct ConvertTwiddlePal8
 {
 	using unpacked_type = typename Unpacker::unpacked_type;
+	Unpacker unpacker;
 	static constexpr u32 xpp = 2;
 	static constexpr u32 ypp = 4;
-	static void Convert(PixelBuffer<unpacked_type> *pb, const u8 *data)
+	void Convert(PixelBuffer<unpacked_type> *pb, const u8 *data)
 	{
 		const u8* p_in = (const u8 *)data;
 
-		pb->prel(0, 0, Unpacker::unpack(p_in[0])); p_in++;
-		pb->prel(0, 1, Unpacker::unpack(p_in[0])); p_in++;
-		pb->prel(1, 0, Unpacker::unpack(p_in[0])); p_in++;
-		pb->prel(1, 1, Unpacker::unpack(p_in[0])); p_in++;
+		pb->prel(0, 0, unpacker.unpack(p_in[0])); p_in++;
+		pb->prel(0, 1, unpacker.unpack(p_in[0])); p_in++;
+		pb->prel(1, 0, unpacker.unpack(p_in[0])); p_in++;
+		pb->prel(1, 1, unpacker.unpack(p_in[0])); p_in++;
 
-		pb->prel(0, 2, Unpacker::unpack(p_in[0])); p_in++;
-		pb->prel(0, 3, Unpacker::unpack(p_in[0])); p_in++;
-		pb->prel(1, 2, Unpacker::unpack(p_in[0])); p_in++;
-		pb->prel(1, 3, Unpacker::unpack(p_in[0])); p_in++;
+		pb->prel(0, 2, unpacker.unpack(p_in[0])); p_in++;
+		pb->prel(0, 3, unpacker.unpack(p_in[0])); p_in++;
+		pb->prel(1, 2, unpacker.unpack(p_in[0])); p_in++;
+		pb->prel(1, 3, unpacker.unpack(p_in[0])); p_in++;
 	}
 };
 
@@ -386,6 +388,7 @@ template<typename PixelConvertor>
 void texture_TW(PixelBuffer<typename PixelConvertor::unpacked_type>* pb, const u8* p_in, u32 width, u32 height)
 {
 	pb->amove(0, 0);
+	PixelConvertor converter;
 
 	const u32 divider = PixelConvertor::xpp * PixelConvertor::ypp;
 
@@ -397,7 +400,7 @@ void texture_TW(PixelBuffer<typename PixelConvertor::unpacked_type>* pb, const u
 		for (u32 x = 0; x < width; x += PixelConvertor::xpp)
 		{
 			const u8* p = &p_in[(twop(x, y, bcx, bcy) / divider) << 3];
-			PixelConvertor::Convert(pb, p);
+			converter.Convert(pb, p);
 
 			pb->rmovex(PixelConvertor::xpp);
 		}
@@ -409,6 +412,7 @@ template<typename PixelConvertor>
 void texture_VQ(PixelBuffer<typename PixelConvertor::unpacked_type>* pb, const u8* p_in, u32 width, u32 height)
 {
 	pb->amove(0, 0);
+	PixelConvertor converter;
 
 	const u32 divider = PixelConvertor::xpp * PixelConvertor::ypp;
 	const u32 bcx = bitscanrev(width);
@@ -419,7 +423,7 @@ void texture_VQ(PixelBuffer<typename PixelConvertor::unpacked_type>* pb, const u
 		for (u32 x = 0; x < width; x += PixelConvertor::xpp)
 		{
 			u8 p = p_in[twop(x, y, bcx, bcy) / divider];
-			PixelConvertor::Convert(pb, &vq_codebook[p * 8]);
+			converter.Convert(pb, &vq_codebook[p * 8]);
 
 			pb->rmovex(PixelConvertor::xpp);
 		}

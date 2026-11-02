@@ -740,7 +740,19 @@ public:
 		L(slice_loop);
 		mov(rax, (size_t)&sh4ctx.pc);
 		mov(call_regs[0], dword[rax]);
+		// MMU state can change between blocks; retain the translated lookup path.
+		Xbyak::Label translated_lookup, lookup_done;
+		mov(rax, (uintptr_t)&mmuOn);
+		cmp(byte[rax], 0);
+		jne(translated_lookup);
+		shr(call_regs[0], 1);
+		and_(call_regs[0], FPCB_MASK);
+		mov(rax, (uintptr_t)p_sh4rcb->fpcb);
+		mov(rax, qword[rax + call_regs64[0] * 8]);
+		jmp(lookup_done);
+		L(translated_lookup);
 		call(bm_GetCodeByVAddr);
+		L(lookup_done);
 		call(rax);
 		mov(rax, (uintptr_t)&sh4ctx.cycle_counter);
 		mov(ecx, dword[rax]);

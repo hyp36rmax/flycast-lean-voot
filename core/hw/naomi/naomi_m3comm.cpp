@@ -1,3 +1,11 @@
+#include "rend/frame_delivery_trace.h"
+#if defined(FLYCAST_VOOT_RENDER_DIAGNOSTICS) && defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <winsock2.h>
+#include <windows.h>
+#endif
 /*
 	Created on: Mar 15, 2020
 
@@ -288,13 +296,44 @@ void NaomiM3Comm::vblank()
 
 	using the_clock = std::chrono::high_resolution_clock;
 	the_clock::time_point start = the_clock::now();
+#if defined(FLYCAST_VOOT_RENDER_DIAGNOSTICS) && defined(_WIN32)
+	uint64_t polls=0, timeouts=0;
+	ULONG64 cyclesStart=0;
+	QueryThreadCycleTime(GetCurrentThread(), &cyclesStart);
+#endif
 	try {
 		bool received = false;
 		do {
+#if defined(FLYCAST_VOOT_RENDER_DIAGNOSTICS) && defined(_WIN32)
+			++polls;
+#endif
 			received = receiveNetwork();
+#ifdef _WIN32
+			if (!received)
+			{
+				const auto remaining = std::chrono::milliseconds(100) - (the_clock::now() - start);
+				if (remaining <= decltype(remaining)::zero()
+						|| !naomiNetwork.waitForData(std::chrono::ceil<std::chrono::microseconds>(remaining)))
+					break;
+			}
+		} while (!received);
+#else
 		} while (!received && the_clock::now() - start < std::chrono::milliseconds(100));
-		if (!received)
+#endif
+		if (!received) {
+#if defined(FLYCAST_VOOT_RENDER_DIAGNOSTICS) && defined(_WIN32)
+			++timeouts;
+#endif
 			INFO_LOG(NETWORK, "No data received");
+		}
+#if defined(FLYCAST_VOOT_RENDER_DIAGNOSTICS) && defined(_WIN32)
+		ULONG64 cyclesEnd=0;
+		QueryThreadCycleTime(GetCurrentThread(), &cyclesEnd);
+		frame_delivery_trace::linkWaitNs.fetch_add(std::chrono::duration_cast<std::chrono::nanoseconds>(the_clock::now()-start).count(), std::memory_order_relaxed);
+		frame_delivery_trace::linkWaitCycles.fetch_add(cyclesEnd-cyclesStart, std::memory_order_relaxed);
+		frame_delivery_trace::linkPolls.fetch_add(polls,std::memory_order_relaxed);
+		frame_delivery_trace::linkTimeouts.fetch_add(timeouts,std::memory_order_relaxed);
+#endif
 		sendNetwork();
 	} catch (const FlycastException& e) {
 		comm_status1 = 0;

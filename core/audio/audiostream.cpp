@@ -48,8 +48,11 @@ AudioBackend *AudioBackend::getBackend(const std::string& slug)
 	return nullptr;
 }
 
+#include "hosted_startup.h"
+
 void WriteSample(s16 r, s16 l)
 {
+	if (hosted_startup::muted()) r = l = 0;
 	Buffer[writePtr].r = r * config::AudioVolume.dbPower();
 	Buffer[writePtr].l = l * config::AudioVolume.dbPower();
 
@@ -63,6 +66,7 @@ void WriteSample(s16 r, s16 l)
 
 void InitAudio()
 {
+	if (!hosted_startup::initialize()) { ERROR_LOG(AUDIO, "Hosted startup signal initialization failed"); return; }
 	registerForEvents();
 	TermAudio();
 

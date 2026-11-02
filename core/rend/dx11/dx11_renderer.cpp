@@ -17,6 +17,8 @@
     along with Flycast.  If not, see <https://www.gnu.org/licenses/>.
 */
 #include "dx11_renderer.h"
+#include "hw/pvr/ta_parse_profile.h"
+#include "hw/pvr/ta_triangle_sort.h"
 #include "dx11context.h"
 #include "hw/pvr/ta.h"
 #include "hw/pvr/pvr_mem.h"
@@ -26,6 +28,7 @@
 #include <memory>
 #ifdef FLYCAST_VOOT_RENDER_DIAGNOSTICS
 #include "ui/mainui.h"
+#include "rend/frame_delivery_trace.h"
 #include <chrono>
 #include <cmath>
 #include <map>
@@ -34,6 +37,76 @@
 #include <locale>
 
 // Opt-in, two-frame geometry evidence. These records have polygon IDs, not guest object IDs.
+// Bounded, opt-in gameplay measurements; no per-frame file I/O.
+static const char* perfOutput = [] {
+	const char* output = std::getenv("FLYCAST_DX11_PERF_OUTPUT");
+	return output && *output ? output : "performance.csv";
+}();
+static unsigned stateSelections = 0, temporaryOwners = 0;
+static ULONG64 perfCyclesStart = 0;
+static double parseUs = 0;
+static ULONG64 parseCycles = 0;
+static std::chrono::steady_clock::time_point perfStart, previousRender;
+static void recordRenderPerformance(const rend_context& context)
+{
+	if (!perfOutput || !*perfOutput) return;
+	static bool armed=false;
+	if (!armed) {
+		std::ifstream arm(std::string(perfOutput) + ".arm");
+		if (!arm) return;
+		armed=true;
+		pvr::parserProfileEnabled=true;
+		frame_delivery_trace::armed.store(true,std::memory_order_relaxed);
+	}
+	static bool complete=false;
+	if(complete) return;
+	using Clock = std::chrono::steady_clock;
+	const auto end = Clock::now();
+	ULONG64 cyclesEnd = 0;
+	QueryThreadCycleTime(GetCurrentThread(), &cyclesEnd);
+	static HANDLE emulationThread = nullptr;
+	if (!emulationThread) {
+		const auto id = frame_delivery_trace::emulationThreadId.load(std::memory_order_relaxed);
+		if (id) emulationThread = OpenThread(THREAD_QUERY_LIMITED_INFORMATION, FALSE, id);
+	}
+	ULONG64 emulationCycles=0, processCycles=0;
+	if (emulationThread) QueryThreadCycleTime(emulationThread, &emulationCycles);
+	QueryProcessCycleTime(GetCurrentProcess(), &processCycles);
+	FILETIME created{}, exited{}, kernel{}, user{};
+	auto cpuTime = [&](bool process) {
+		if (process) GetProcessTimes(GetCurrentProcess(), &created, &exited, &kernel, &user);
+		else if (emulationThread) GetThreadTimes(emulationThread, &created, &exited, &kernel, &user);
+		return ((static_cast<ULONG64>(kernel.dwHighDateTime) << 32) | kernel.dwLowDateTime)
+			+ ((static_cast<ULONG64>(user.dwHighDateTime) << 32) | user.dwLowDateTime);
+	};
+	const auto emulationCpu=cpuTime(false), processCpu=cpuTime(true);
+	static ULONG64 previousEmulationCycles=0,previousProcessCycles=0,previousEmulationCpu=0,previousProcessCpu=0;
+	const auto linkWait=frame_delivery_trace::linkWaitNs.load(std::memory_order_relaxed);
+	const auto linkCycles=frame_delivery_trace::linkWaitCycles.load(std::memory_order_relaxed);
+	const auto linkPolls=frame_delivery_trace::linkPolls.load(std::memory_order_relaxed);
+	const auto linkTimeouts=frame_delivery_trace::linkTimeouts.load(std::memory_order_relaxed);
+	static uint64_t previousLinkWait=0,previousLinkCycles=0,previousLinkPolls=0,previousLinkTimeouts=0;
+	struct Sample { double wallUs, intervalUs; unsigned requests, calls; ULONG64 cycles; double parseUs; ULONG64 parseCycles; std::size_t vertices,indices; pvr::DepthSortStats sort; pvr::ParserProfile parser; ULONG64 emulationCycles,processCycles,emulationCpu,processCpu; uint64_t linkWait,linkCycles,linkPolls,linkTimeouts; };
+	static Sample samples[600];
+	static unsigned frames = 0;
+	const double wallUs = std::chrono::duration<double, std::micro>(end - perfStart).count();
+	const double intervalUs = std::chrono::duration<double, std::micro>(perfStart - previousRender).count();
+	previousRender = perfStart;
+	if (frames >= 120 && frames < 720)
+		samples[frames - 120] = {wallUs, intervalUs, stateSelections, temporaryOwners, cyclesEnd - perfCyclesStart, parseUs, parseCycles, context.verts.size(), context.idx.size(), pvr::depthSortStats, pvr::parserProfile, emulationCycles-previousEmulationCycles,processCycles-previousProcessCycles,emulationCpu-previousEmulationCpu,processCpu-previousProcessCpu,linkWait-previousLinkWait,linkCycles-previousLinkCycles,linkPolls-previousLinkPolls,linkTimeouts-previousLinkTimeouts};
+	previousLinkWait=linkWait; previousLinkCycles=linkCycles; previousLinkPolls=linkPolls; previousLinkTimeouts=linkTimeouts;
+	previousEmulationCycles=emulationCycles; previousProcessCycles=processCycles;
+	previousEmulationCpu=emulationCpu; previousProcessCpu=processCpu;
+	if (++frames == 720) {
+		std::ofstream out(perfOutput);
+		out.imbue(std::locale::classic());
+		out << "sample,render_wall_us,render_interval_us,state_selections,temporary_owners,render_thread_cycles,parse_us,parse_thread_cycles,vertices,indices,sort_ns,triangles,standard_sorts,radix_sorts,scratch_growths,reset_ns,decode_ns,post_ns,region_ns,texture_sample_ns,texture_calls,texture_samples,texture_updates,command_bytes,update_ns,update_setup_ns,convert_ns,protect_ns,upload_ns,palette_convert_ns,direct_convert_ns,converted_pixels,emulation_cycles,process_cycles,emulation_cpu_100ns,process_cpu_100ns,link_wait_ns,link_wait_cycles,link_polls,link_timeouts\n";
+		for (unsigned i = 0; i < 600; ++i)
+			out << i << ',' << samples[i].wallUs << ',' << samples[i].intervalUs << ',' << samples[i].requests << ',' << samples[i].calls << ',' << samples[i].cycles << ',' << samples[i].parseUs << ',' << samples[i].parseCycles << ',' << samples[i].vertices << ',' << samples[i].indices << ',' << samples[i].sort.ns << ',' << samples[i].sort.triangles << ',' << samples[i].sort.standardCalls << ',' << samples[i].sort.radixCalls << ',' << samples[i].sort.scratchGrowths << ',' << samples[i].parser.resetNs << ',' << samples[i].parser.decodeNs << ',' << samples[i].parser.postNs << ',' << samples[i].parser.regionNs << ',' << samples[i].parser.textureNs << ',' << samples[i].parser.textureCalls << ',' << samples[i].parser.textureSamples << ',' << samples[i].parser.textureUpdates << ',' << samples[i].parser.commandBytes << ',' << samples[i].parser.updateNs << ',' << samples[i].parser.setupNs << ',' << samples[i].parser.convertNs << ',' << samples[i].parser.protectNs << ',' << samples[i].parser.uploadNs << ',' << samples[i].parser.paletteConvertNs << ',' << samples[i].parser.directConvertNs << ',' << samples[i].parser.convertedPixels << ',' << samples[i].emulationCycles << ',' << samples[i].processCycles << ',' << samples[i].emulationCpu << ',' << samples[i].processCpu << ',' << samples[i].linkWait << ',' << samples[i].linkCycles << ',' << samples[i].linkPolls << ',' << samples[i].linkTimeouts << '\n';
+		if(emulationThread) { CloseHandle(emulationThread); emulationThread=nullptr; }
+		complete=true;
+	}
+}
 static std::ofstream vootDrawTrace;
 static std::string vootGeometryPrefix;
 static void traceVootGeometry(TA_context* ctx)
@@ -411,14 +484,30 @@ bool DX11Renderer::ensureBufferSize(ComPtr<ID3D11Buffer>& buffer, D3D11_BIND_FLA
 
 BaseTextureCacheData *DX11Renderer::GetTexture(TSP tsp, TCW tcw, int area)
 {
+#ifdef FLYCAST_VOOT_RENDER_DIAGNOSTICS
+	std::uint64_t textureStart=0;
+	if(pvr::parserProfileEnabled && ((pvr::parserProfile.textureCalls++ & 63)==pvr::textureSamplePhase)) {
+		++pvr::parserProfile.textureSamples;
+		textureStart=pvr::parserTicks();
+	}
+#endif
 	//lookup texture
 	DX11Texture* tf = texCache.getTextureCacheData(tsp, tcw, area);
 
 	//update if needed
 	if (tf->NeedsUpdate())
 	{
+#ifdef FLYCAST_VOOT_RENDER_DIAGNOSTICS
+		if(pvr::parserProfileEnabled) ++pvr::parserProfile.textureUpdates;
+#endif
+		#ifdef FLYCAST_VOOT_RENDER_DIAGNOSTICS
+		const auto updateStart=pvr::parserProfileEnabled?pvr::parserTicks():0;
+#endif
 		if (!tf->Update())
 			tf = nullptr;
+#ifdef FLYCAST_VOOT_RENDER_DIAGNOSTICS
+		if(updateStart) pvr::parserProfile.updateNs+=pvr::parserTicks()-updateStart;
+#endif
 	}
 	else if (tf->IsCustomTextureAvailable())
 	{
@@ -427,6 +516,9 @@ BaseTextureCacheData *DX11Renderer::GetTexture(TSP tsp, TCW tcw, int area)
 		// FIXME textureView
 		tf->loadCustomTexture();
 	}
+#ifdef FLYCAST_VOOT_RENDER_DIAGNOSTICS
+	if(textureStart) pvr::parserProfile.textureNs+=pvr::parserTicks()-textureStart;
+#endif
 	return tf;
 }
 
@@ -441,7 +533,23 @@ void DX11Renderer::Process(TA_context* ctx)
 	if (!ctx->rend.isRTT && ctx->rend.swapInterval > 0)
 		DX11Context::Instance()->setSwapInterval(ctx->rend.swapInterval);
 
+#ifdef FLYCAST_VOOT_RENDER_DIAGNOSTICS
+	pvr::depthSortStats = {};
+	pvr::parserProfile = {};
+	pvr::textureSamplePhase = (pvr::textureSamplePhase + 1) & 63;
+	const auto parseStart = perfOutput && *perfOutput ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+	ULONG64 parseBeginCycles = 0;
+	if (perfOutput && *perfOutput) QueryThreadCycleTime(GetCurrentThread(), &parseBeginCycles);
+#endif
 	ta_parse(ctx, true);
+#ifdef FLYCAST_VOOT_RENDER_DIAGNOSTICS
+	if (perfOutput && *perfOutput) {
+		ULONG64 endCycles;
+		QueryThreadCycleTime(GetCurrentThread(), &endCycles);
+		parseUs = std::chrono::duration<double,std::micro>(std::chrono::steady_clock::now() - parseStart).count();
+		parseCycles = endCycles - parseBeginCycles;
+	}
+#endif
 #ifdef FLYCAST_VOOT_RENDER_DIAGNOSTICS
 	traceVootGeometry(ctx);
 #endif
@@ -659,6 +767,13 @@ void DX11Renderer::setupPixelShaderConstants()
 
 bool DX11Renderer::Render()
 {
+#ifdef FLYCAST_VOOT_RENDER_DIAGNOSTICS
+	if (!rendContext->isRTT && perfOutput && *perfOutput) {
+		perfStart = std::chrono::steady_clock::now();
+		QueryThreadCycleTime(GetCurrentThread(), &perfCyclesStart);
+		stateSelections = temporaryOwners = 0;
+	}
+#endif
 	resetContextState();
 	bool is_rtt = rendContext->isRTT;
 	if (!is_rtt)
@@ -752,6 +867,9 @@ bool DX11Renderer::Render()
 		clearLastFrame = false;
 	}
 
+#ifdef FLYCAST_VOOT_RENDER_DIAGNOSTICS
+	if (!is_rtt) recordRenderPerformance(*rendContext);
+#endif
 	return !is_rtt;
 }
 
@@ -811,19 +929,22 @@ void DX11Renderer::displayFramebuffer()
 
 void DX11Renderer::setCullMode(int mode)
 {
-	ComPtr<ID3D11RasterizerState> rasterizer;
+#ifdef FLYCAST_VOOT_RENDER_DIAGNOSTICS
+	++stateSelections;
+#endif
+	ID3D11RasterizerState* rasterizer;
 	switch (mode)
 	{
 	case 0:
 	case 1:
 	default:
-		rasterizer = rasterCullNone;
+		rasterizer = rasterCullNone.get();
 		break;
 	case 2:
-		rasterizer = rasterCullFront;
+		rasterizer = rasterCullFront.get();
 		break;
 	case 3:
-		rasterizer = rasterCullBack;
+		rasterizer = rasterCullBack.get();
 		break;
 	}
 	deviceContext->RSSetState(rasterizer);
@@ -846,6 +967,10 @@ TileClipping DX11Renderer::setTileClip(u32 tileclip, Rect& clip_rect)
 template <u32 Type, bool SortingEnabled>
 void DX11Renderer::setRenderState(const PolyParam *gp)
 {
+#ifdef FLYCAST_VOOT_RENDER_DIAGNOSTICS
+	stateSelections += 4;
+
+#endif
 	PixelPolyConstants constants;
 	if (gp->pcw.Texture && gp->tsp.FilterMode > 1 && Type != ListType_Punch_Through && gp->tcw.MipMapped == 1)
 	{
@@ -873,9 +998,9 @@ void DX11Renderer::setRenderState(const PolyParam *gp)
 			gpuPalette = 2; // force linear
 	}
 
-	ComPtr<ID3D11VertexShader> vertexShader = shaders->getVertexShader(gp->pcw.Gouraud, gp->isNaomi2());
+	const auto& vertexShader = shaders->getVertexShader(gp->pcw.Gouraud, gp->isNaomi2());
 	deviceContext->VSSetShader(vertexShader, nullptr, 0);
-	ComPtr<ID3D11PixelShader> pixelShader = shaders->getShader(
+	const auto& pixelShader = shaders->getShader(
 			gp->pcw.Texture,
 			gp->tsp.UseAlpha,
 			gp->tsp.IgnoreTexA || gp->tcw.PixelFmt == Pixel565,

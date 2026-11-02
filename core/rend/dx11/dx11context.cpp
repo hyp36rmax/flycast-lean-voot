@@ -17,6 +17,11 @@
     along with Flycast.  If not, see <https://www.gnu.org/licenses/>.
 */
 #include "dx11context.h"
+#include "rend/frame_delivery_trace.h"
+#ifdef FLYCAST_VOOT_RENDER_DIAGNOSTICS
+#include <fstream>
+#include <locale>
+#endif
 #ifndef LIBRETRO
 #include "rend/osd.h"
 #ifdef USE_SDL
@@ -118,6 +123,21 @@ bool DX11Context::init(bool keepCurrentWindow)
 	ComPtr<IDXGIDevice2> dxgiDevice;
 	pDevice.as(dxgiDevice);
 
+	// Bound driver-side run-ahead without changing VSync or dropping frames.
+	bool limitFrameLatency = config::Dx11LimitFrameLatency;
+#ifdef FLYCAST_VOOT_RENDER_DIAGNOSTICS
+	limitFrameLatency = limitFrameLatency && std::getenv("FLYCAST_DX11_BASELINE_LATENCY") == nullptr;
+#endif
+	if (limitFrameLatency) {
+		const HRESULT latencyResult = dxgiDevice->SetMaximumFrameLatency(1);
+		if (FAILED(latencyResult))
+			WARN_LOG(RENDERER, "SetMaximumFrameLatency failed: %x", latencyResult);
+	}
+#ifdef FLYCAST_VOOT_RENDER_DIAGNOSTICS
+	UINT maximumLatency = 0;
+	dxgiDevice->GetMaximumFrameLatency(&maximumLatency);
+	NOTICE_LOG(RENDERER, "FrameDelivery maximumLatency=%u baseline=%d", maximumLatency, !limitFrameLatency);
+#endif
 	dxgiAdapter.reset();
 	dxgiDevice->GetAdapter(&dxgiAdapter.get());
 	DXGI_ADAPTER_DESC desc;
@@ -233,6 +253,11 @@ void DX11Context::Present()
 	if (!frameRendered)
 		return;
 	frameRendered = false;
+#ifdef FLYCAST_VOOT_RENDER_DIAGNOSTICS
+	const auto deliveryStart = frame_delivery_trace::enabled() ? frame_delivery_trace::ticks() : 0;
+	LARGE_INTEGER deliveryQpc{};
+	if (deliveryStart) QueryPerformanceCounter(&deliveryQpc);
+#endif
 	bool swapOnVSync = !settings.input.fastForwardMode && config::VSync;
 	HRESULT hr;
 	if (!swapchain) {
@@ -245,6 +270,57 @@ void DX11Context::Present()
 	else {
 		hr = swapchain->Present(0, allowTearing ? DXGI_PRESENT_ALLOW_TEARING : DXGI_PRESENT_DO_NOT_WAIT);
 	}
+#ifdef FLYCAST_VOOT_RENDER_DIAGNOSTICS
+	if (deliveryStart) {
+		using namespace frame_delivery_trace;
+		const auto end = ticks();
+		struct Sample {
+			uint64_t begin, duration, interval, renderAge, presentAge, producerWait, renderWait, frameWait;
+			unsigned depth, drops, skipped, renders, presents, intervalSetting, lastPresent;
+			HRESULT result, statisticsResult;
+			DXGI_FRAME_STATISTICS statistics;
+			uint64_t statisticsNs, renderQueuedAt;
+			LONGLONG presentQpc, qpcFrequency;
+			float displayRefresh;
+		};
+		static Sample samples[600];
+		static unsigned frames = 0;
+		static uint64_t previous = 0, previousProducerWait = 0, previousRenderWait = 0, previousFrameWait = 0;
+		const auto producer = producerWait.load(), render = renderWait.load(), frame = frameWait.load();
+		if (frames >= 120 && frames < 720) {
+			auto& sample = samples[frames - 120];
+			sample = {deliveryStart, end - deliveryStart, deliveryStart - previous,
+				renderAge.load(), presentAge.load(), producer - previousProducerWait, render - previousRenderWait, frame - previousFrameWait,
+				maxDepth.load(), droppedPresent.load(), skippedRender.load(), renders.load(), presents.load(),
+				swapOnVSync ? (unsigned)std::clamp((int)(settings.display.refreshRate / 60.f * gameSwapInterval), 1, 4) : 0};
+			sample.result = hr;
+			sample.renderQueuedAt = renderQueuedAt.load();
+			sample.presentQpc = deliveryQpc.QuadPart;
+			static const LONGLONG frequency = [] { LARGE_INTEGER value; QueryPerformanceFrequency(&value); return value.QuadPart; }();
+			sample.qpcFrequency = frequency;
+			sample.displayRefresh = settings.display.refreshRate;
+			const auto statsStart = ticks();
+			if (swapchain) {
+				sample.statisticsResult = swapchain->GetFrameStatistics(&sample.statistics);
+				swapchain->GetLastPresentCount(&sample.lastPresent);
+			} else sample.statisticsResult = E_NOINTERFACE;
+			sample.statisticsNs = ticks() - statsStart;
+		}
+		previous = deliveryStart;
+		previousProducerWait = producer;
+		previousRenderWait = render;
+		previousFrameWait = frame;
+		if (++frames == 720) {
+			std::ofstream out(output);
+			out.imbue(std::locale::classic());
+			out << "sample,present_begin_ns,present_ns,present_interval_ns,render_age_ns,present_age_ns,producer_wait_ns,render_wait_ns,frame_submit_ns,max_depth,dropped_present,skipped_render,renders,presents,swap_interval,last_present,result,stats_result,display_present_count,display_refresh_count,sync_refresh_count,sync_qpc,statistics_ns,render_queued_ns,present_qpc,qpc_frequency,display_refresh\n";
+			for (unsigned i=0;i<600;++i) {
+				const auto& a=samples[i];
+				out << i << ',' << a.begin << ',' << a.duration << ',' << a.interval << ',' << a.renderAge << ',' << a.presentAge << ',' << a.producerWait << ',' << a.renderWait << ',' << a.frameWait << ',' << a.depth << ',' << a.drops << ',' << a.skipped << ',' << a.renders << ',' << a.presents << ',' << a.intervalSetting << ',' << a.lastPresent << ',' << a.result << ',' << a.statisticsResult << ',' << a.statistics.PresentCount << ',' << a.statistics.PresentRefreshCount << ',' << a.statistics.SyncRefreshCount << ',' << a.statistics.SyncQPCTime.QuadPart << ',' << a.statisticsNs << ',' << a.renderQueuedAt << ',' << a.presentQpc << ',' << a.qpcFrequency << ',' << a.displayRefresh << '\n';
+			}
+		}
+	}
+#endif
 	if (hr == DXGI_ERROR_DEVICE_REMOVED || hr == DXGI_ERROR_DEVICE_RESET) {
 		WARN_LOG(RENDERER, "Present failed: device removed/reset");
 		handleDeviceLost();
