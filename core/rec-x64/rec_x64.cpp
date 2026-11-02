@@ -21,6 +21,8 @@ using namespace Xbyak::util;
 #include "oslib/unwind_info.h"
 #include "oslib/virtmem.h"
 #include "cfg/option.h"
+#include "hw/sh4/voot_guest_trace.h"
+#include "rend/voot_visibility.h"
 
 static void (*mainloop)();
 static void (*handleException)();
@@ -149,6 +151,14 @@ public:
 		sub(dword[rax], block->guest_cycles);
 
 		regalloc.DoAlloc(block);
+#ifdef FLYCAST_VOOT_GUEST_TRACE
+        if (voot_guest_trace::enabled() && settings.content.gameId == "VIRTUAL-ON ORATORIO TANGRAM"
+            && ((block->vaddr & 0x1fffffff) == 0x0c0246c0 || (block->vaddr & 0x1fffffff) == 0x0c0244da)) {
+            mov(call_regs64[0], (uintptr_t)&sh4ctx);
+            mov(call_regs[1], block->vaddr);
+            GenCall(voot_guest_trace::visibility);
+        }
+#endif
 
 		for (current_opid = 0; current_opid < block->oplist.size(); current_opid++)
 		{
@@ -214,6 +224,7 @@ public:
 			break;
 
 			case shop_readm:
+			{
 				if (!GenReadMemImmediate(op, block))
 				{
 					// Not an immediate address
@@ -248,8 +259,37 @@ public:
 						host_reg_to_shil_param(op.rd, rcx);
 					}
 				}
+                // Only the identified VOOT horizontal sphere-culling limit loads.
+                const u32 visibilityPc = (block->vaddr + op.guest_offs) & 0x1fffffff;
+                if (op.size == 4 && (visibilityPc == 0x0c024710 || visibilityPc == 0x0c024718)
+                    && settings.content.gameId == "VIRTUAL-ON ORATORIO TANGRAM"
+                    && op.rd._reg == (visibilityPc == 0x0c024710 ? reg_fr_9 : reg_fr_11)) {
+                    const struct {u32 pc; u16 opcode;} signature[] = {
+                        {0x0c0246c0, 0xfbfd}, {0x0c0246c2, 0xf38d},
+                        {0x0c024710, 0xf919}, {0x0c024718, 0xfb19},
+                        {0x0c02472e, 0xf935}, {0x0c024738, 0xfb85}};
+                    bool matches = true;
+                    for (const auto& word : signature) {
+                        const u8* code = GetMemPtr(word.pc, 2);
+                        u16 opcode = 0;
+                        if (code) std::memcpy(&opcode, code, 2);
+                        matches &= code && opcode == word.opcode;
+                    }
+                    if (matches) {
+                        mov(rax, (uintptr_t)&voot_visibility::horizontalExtra);
+                        const Xbyak::Xmm value = regalloc.IsAllocf(op.rd) ? regalloc.MapXRegister(op.rd) : xmm0;
+                        if (!regalloc.IsAllocf(op.rd)) {
+                            mov(rcx, (uintptr_t)op.rd.reg_ptr(sh4ctx));
+                            movss(value, dword[rcx]);
+                        }
+                        if (visibilityPc == 0x0c024710) subss(value, dword[rax]);
+                        else addss(value, dword[rax]);
+                        if (!regalloc.IsAllocf(op.rd)) movss(dword[rcx], value);
+                    }
+                }
 				break;
 
+			}
 			case shop_writem:
 			{
 				if (!GenWriteMemImmediate(op, block))

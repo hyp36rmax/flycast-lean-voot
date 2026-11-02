@@ -68,7 +68,9 @@ public:
 
 	void CalcMatrices(const rend_context *renderingContext, int width = 0, int height = 0);
 	Rect getBaseScissor() const;
-	TileClipping getTileClip(u32 val, Rect& clipRect);
+	TileClipping getTileClip(u32 val, Rect& clipRect, bool expandFullWidth = false);
+	bool expandBackground(Vertex* vertices) const;
+	bool getVootTitleSideFill(const Vertex* title, Vertex* sides);
 
 private:
 	bool isClipped() const;

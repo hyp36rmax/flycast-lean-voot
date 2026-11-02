@@ -18,6 +18,8 @@
 */
 #define GLM_FORCE_SWIZZLE 1
 #include "transform_matrix.h"
+#include "voot_visibility.h"
+#include <cstring>
 #include <glm/gtx/transform.hpp>
 
 static void getTAViewport(const rend_context& rendCtx, int& width, int& height) {
@@ -102,12 +104,20 @@ void TransformMatrix::CalcMatrices(const rend_context *renderingContext, int wid
 	}
 	else
 	{
-		float widescreenShift;
+		float visibilityExtra = 0.f;
+        if (directx && config::VootWidescreenClipping && config::Widescreen
+            && !config::Rotate90 && !config::EmulateFramebuffer
+            && settings.content.gameId == "VIRTUAL-ON ORATORIO TANGRAM") {
+            const float aspect = config::SuperWidescreen ? renderViewport.x / renderViewport.y : 16.f / 9.f;
+            visibilityExtra = std::max(0.f, dcViewport.x * .5f * (aspect * .75f - 1.f));
+        }
+        voot_visibility::horizontalExtra.store(visibilityExtra, std::memory_order_relaxed);
+        float widescreenShift;
 		if (config::Widescreen && !config::Rotate90 && !config::EmulateFramebuffer)
 		{
 			widescreenShift = 1.f - dcViewport.x / dcViewport.y * renderViewport.y / renderViewport.x;
 			if (config::SuperWidescreen)
-				dcViewport.x *= (float)settings.display.width / settings.display.height / 4.f * 3.f;
+				dcViewport.x *= renderViewport.x / renderViewport.y / 4.f * 3.f;
 			else
 				dcViewport.x *= 4.f / 3.f;
 		}
@@ -203,7 +213,7 @@ void TransformMatrix::getScissorScaling(float& scale_x, float& scale_y) const
 	}
 }
 
-TileClipping TransformMatrix::getTileClip(u32 val, Rect& clipRect)
+TileClipping TransformMatrix::getTileClip(u32 val, Rect& clipRect, bool expandFullWidth)
 {
 	if (!config::Clipping)
 		return TileClipping::Off;
@@ -234,14 +244,6 @@ TileClipping TransformMatrix::getTileClip(u32 val, Rect& clipRect)
 	glm::vec4 clip_end(cex, cey, 0, 1);
 	clip_start = viewportMatrix * clip_start;
 	clip_end = viewportMatrix * clip_end;
-	clipRect = { clip_start.xy(), clip_end.xy() - clip_start.xy() };
-	clipRect.size.x++;
-	clipRect.size.y = std::abs(clipRect.size.y) + 1;
-	if (tileClippingMode == TileClipping::Outside)
-	{
-		Rect base = getBaseScissor();
-		clipRect = intersect(clipRect, base);
-	}
 	csx = clip_start[0];
 	csy = clip_start[1];
 	cey = clip_end[1];
@@ -250,7 +252,74 @@ TileClipping TransformMatrix::getTileClip(u32 val, Rect& clipRect)
 		glm::ivec2(std::max(0, (int)std::round(csx)), std::max(0, (int)std::round(std::min(csy, cey)))),
 		glm::ivec2(std::max(0, (int)std::round(cex - csx)), std::max(0, (int)std::round(std::abs(cey - csy))))
 	};
+	if (expandFullWidth && !renderingContext->isRTT && tileClippingMode == TileClipping::Outside
+			&& (val & 63) == 0 && (((val >> 6) & 63) + 1) * 32 >= (u32)renderingContext->globClip.x)
+	{
+		// A vertically restricted full-width clip must not reintroduce a 4:3 horizontal crop.
+		// Keep partial-width/inverse clips and every vertical boundary unchanged.
+		Rect base = getBaseScissor();
+		clipRect.origin.x = base.origin.x;
+		clipRect.size.x = base.size.x;
+	}
 	return tileClippingMode;
+}
+
+bool TransformMatrix::expandBackground(Vertex* vertices) const
+{
+	if (renderingContext->isRTT || viewportMatrix[0][0] <= 0)
+		return false;
+	// Only a uniform clear plane can grow without changing its original shading.
+	for (int i = 1; i < 4; i++)
+		if (memcmp(vertices[0].col, vertices[i].col, sizeof(vertices[0].col))
+				|| memcmp(vertices[0].spc, vertices[i].spc, sizeof(vertices[0].spc))
+				|| memcmp(vertices[0].col1, vertices[i].col1, sizeof(vertices[0].col1))
+				|| memcmp(vertices[0].spc1, vertices[i].spc1, sizeof(vertices[0].spc1)))
+			return false;
+	Rect frame = getBaseScissor();
+	float left = (frame.origin.x - viewportMatrix[3][0]) / viewportMatrix[0][0];
+	float right = (frame.origin.x + frame.size.x - viewportMatrix[3][0]) / viewportMatrix[0][0];
+	left = std::min(left, vertices[0].x);
+	right = std::max(right, vertices[1].x);
+	if (left == vertices[0].x && right == vertices[1].x)
+		return false;
+	vertices[0].x = vertices[2].x = left;
+	vertices[1].x = vertices[3].x = right;
+	return true;
+}
+
+bool TransformMatrix::getVootTitleSideFill(const Vertex* title, Vertex* sides)
+{
+	if (renderingContext->isRTT || viewportMatrix[0][0] <= 0 || viewportMatrix[1][1] <= 0)
+		return false;
+	// Recorded VOOT title quad: its opaque white region ends at logical X=640.
+	for (int i = 0; i < 4; i++)
+	{
+		if (title[i].x != ((i & 1) ? 1024.f : 0.f) || title[i].y != ((i & 2) ? 496.f : -16.f)
+				|| title[i].z != 10.f || title[i].u != ((i & 1) ? 1023.5f / 1024 : 0.5f / 1024)
+				|| title[i].v != ((i & 2) ? 511.5f / 512 : 0.5f / 512)
+				|| memcmp(title[0].col, title[i].col, sizeof(title[0].col))
+				|| memcmp(title[0].spc, title[i].spc, sizeof(title[0].spc)))
+			return false;
+	}
+	const Rect frame = getBaseScissor();
+	const float left = (frame.origin.x - viewportMatrix[3][0]) / viewportMatrix[0][0];
+	const float right = (frame.origin.x + frame.size.x - viewportMatrix[3][0]) / viewportMatrix[0][0];
+	if (left >= 0 || right <= 640)
+		return false;
+	Rect originalClip{};
+	getTileClip(0x201a04c0, originalClip);
+	const float top = (originalClip.origin.y - viewportMatrix[3][1]) / viewportMatrix[1][1];
+	const float bottom = (originalClip.origin.y + originalClip.size.y - viewportMatrix[3][1]) / viewportMatrix[1][1];
+	for (int i = 0; i < 8; i++)
+	{
+		sides[i] = title[0];
+		sides[i].x = i < 4 ? ((i & 1) ? 0.f : left) : ((i & 1) ? right : 640.f);
+		sides[i].y = (i & 2) ? bottom : top;
+		// Sample the verified white corner; preserve the title's tint and alpha.
+		sides[i].u = 0.5f / 1024;
+		sides[i].v = 0.5f / 512;
+	}
+	return true;
 }
 
 void getScaledFramebufferSize(const rend_context& rendCtx, int& width, int& height)

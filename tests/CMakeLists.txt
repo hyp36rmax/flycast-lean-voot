@@ -7,7 +7,14 @@ endif()
 target_link_libraries(${PROJECT_NAME} PRIVATE GTest::gtest_main)
         
 target_include_directories(${PROJECT_NAME} PUBLIC inc)
+option(FLYCAST_VOOT_FOCUSED_TESTS "Build only the VOOT renderer regression fixture" OFF)
+if(FLYCAST_VOOT_FOCUSED_TESTS)
+    target_sources(${PROJECT_NAME} PRIVATE src/VootWidescreenClipTest.cpp src/test_stubs.cpp)
+    return()
+endif()
+
 target_sources(${PROJECT_NAME} PRIVATE
+        src/VootWidescreenClipTest.cpp
         src/CheatManagerTest.cpp
         src/ConfigFileTest.cpp
         src/div32_test.cpp

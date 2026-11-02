@@ -77,6 +77,10 @@ if(NOT APPLE AND (NOT UNIX OR CMAKE_SYSTEM_NAME MATCHES "DragonFly|FreeBSD|OpenB
 endif()
 
 option(OT_LEAN_RUNTIME "Exclude frontend box art and scraping" OFF)
+option(FLYCAST_VOOT_RENDER_DIAGNOSTICS "Sample VOOT DX11 submission and clipping state" OFF)
+if(FLYCAST_VOOT_RENDER_DIAGNOSTICS)
+	set_property(SOURCE core/rend/dx11/dx11_renderer.cpp APPEND PROPERTY COMPILE_DEFINITIONS FLYCAST_VOOT_RENDER_DIAGNOSTICS)
+endif()
 
 option(ENABLE_CTEST "Enables unit tests" OFF)
 option(ENABLE_OPROFILE "Enable OProfile" OFF)
@@ -127,7 +131,8 @@ include(CMakeRC)
 
 if(ENABLE_CTEST)
 	include(CTest)
-	add_compile_definitions(FLYCAST_TEST_FILES="${CMAKE_CURRENT_SOURCE_DIR}/tests/files")
+	# Test fixtures are C++ only; quoted paths with spaces are not valid MASM definitions.
+	add_compile_definitions("$<$<COMPILE_LANGUAGE:CXX>:FLYCAST_TEST_FILES=\"${CMAKE_CURRENT_SOURCE_DIR}/tests/files\">")
 endif()
 
 if(IOS AND NOT LIBRETRO)
@@ -1532,4 +1537,9 @@ endif()
 if(${CMAKE_GENERATOR} MATCHES "^Xcode.*|^Visual Studio.*")
 	file(GLOB_RECURSE SRC_FILES *.h *.cpp *.c *.cc *.mm)
 	source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES ${SRC_FILES})
+endif()
+
+option(FLYCAST_VOOT_GUEST_TRACE "Bounded VOOT submission caller diagnostics" OFF)
+if(FLYCAST_VOOT_GUEST_TRACE)
+    set_property(SOURCE core/rec-x64/rec_x64.cpp APPEND PROPERTY COMPILE_DEFINITIONS FLYCAST_VOOT_GUEST_TRACE)
 endif()

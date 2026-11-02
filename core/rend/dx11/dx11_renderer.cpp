@@ -24,6 +24,96 @@
 #include "rend/sorter.h"
 
 #include <memory>
+#ifdef FLYCAST_VOOT_RENDER_DIAGNOSTICS
+#include "ui/mainui.h"
+#include <chrono>
+#include <cmath>
+#include <map>
+#include <cstdlib>
+#include <fstream>
+#include <locale>
+
+// Opt-in, two-frame geometry evidence. These records have polygon IDs, not guest object IDs.
+static std::ofstream vootDrawTrace;
+static std::string vootGeometryPrefix;
+static void traceVootGeometry(TA_context* ctx)
+{
+	vootDrawTrace.close();
+	vootGeometryPrefix.clear();
+	static unsigned captures = 0;
+	const char* prefix = std::getenv("FLYCAST_VOOT_GEOMETRY_TRACE");
+	const char* requestedFrames = std::getenv("FLYCAST_VOOT_GEOMETRY_TRACE_FRAMES");
+	// HUD ownership research must include small contexts omitted by world-only traces.
+	const char* hudTraceOption = std::getenv("FLYCAST_VOOT_HUD_TRACE");
+	const bool hudTrace = hudTraceOption && std::strcmp(hudTraceOption, "1") == 0;
+	const unsigned limit = requestedFrames ? std::max(1, std::min(120, std::atoi(requestedFrames))) : 2;
+	if (!prefix || !*prefix || captures >= limit || ctx->rend.isRTT
+			|| settings.content.gameId != "VIRTUAL-ON ORATORIO TANGRAM"
+			|| (!hudTrace && ctx->rend.verts.size() < 1000))
+		return;
+	if (limit > 2)
+	{
+		// Camera-turn traces are externally armed and bounded; ordinary two-frame captures stay unchanged.
+		if (!std::ifstream(std::string(prefix) + ".arm")) return;
+		static unsigned eligibleFrames = 0;
+		const char* requestedStride = std::getenv("FLYCAST_VOOT_GEOMETRY_TRACE_STRIDE");
+		const unsigned stride = requestedStride ? std::max(1, std::min(600, std::atoi(requestedStride))) : (hudTrace ? 1 : 6);
+		if (eligibleFrames++ % stride != 0) return;
+	}
+	vootGeometryPrefix = std::string(prefix) + "." + std::to_string(captures++);
+	std::ofstream stamp(vootGeometryPrefix + ".time.txt");
+	stamp.imbue(std::locale::classic());
+	stamp << std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count() << '\n';
+	unsigned child = 0;
+	for (TA_context* current = ctx; current; current = current->nextContext)
+	{
+		std::ofstream raw(vootGeometryPrefix + ".ta" + std::to_string(child++) + ".bin", std::ios::binary);
+		raw.write(reinterpret_cast<const char*>(current->getTADataBegin()),
+				current->getTADataEnd() - current->getTADataBegin());
+		if (!raw) ERROR_LOG(RENDERER, "Voot geometry TA evidence write failed");
+	}
+	std::ofstream vertices(vootGeometryPrefix + ".vertices.csv");
+	vertices.imbue(std::locale::classic());
+	vertices.precision(9);
+	vertices << "id,x,y,z,u,v,b,g,r,a\n";
+	for (size_t i = 0; i < ctx->rend.verts.size(); i++)
+	{
+		const Vertex& v = ctx->rend.verts[i];
+		vertices << i << ',' << v.x << ',' << v.y << ',' << v.z << ',' << v.u << ',' << v.v;
+		for (u8 channel : v.col) vertices << ',' << unsigned(channel);
+		vertices << '\n';
+	}
+	std::ofstream polygons(vootGeometryPrefix + ".polygons.csv");
+	polygons.imbue(std::locale::classic());
+	polygons << "list,id,first,count,pcw,isp,tsp,tcw,tileclip\n";
+	auto list = [&](const char* name, const std::vector<PolyParam>& params) {
+		for (size_t i = 0; i < params.size(); i++) {
+			const PolyParam& p = params[i];
+			polygons << name << ',' << i << ',' << p.first << ',' << p.count << ','
+					<< p.pcw.full << ',' << p.isp.full << ',' << p.tsp.full << ',' << p.tcw.full << ',' << p.tileclip << '\n';
+		}
+	};
+	list("op", ctx->rend.global_param_op);
+	list("pt", ctx->rend.global_param_pt);
+	list("tr", ctx->rend.global_param_tr);
+	if (hudTrace)
+	{
+		// Sorted translucent parameters retain vertex ranges; record their GPU index ranges separately.
+		std::ofstream sorted(vootGeometryPrefix + ".sorted.csv");
+		sorted.imbue(std::locale::classic());
+		sorted << "poly,first,count\n";
+		for (const SortedTriangle& triangle : ctx->rend.sortedTriangles)
+			sorted << triangle.polyIndex << ',' << triangle.first << ',' << triangle.count << '\n';
+		if (!sorted) ERROR_LOG(RENDERER, "Voot HUD sorted-range evidence write failed");
+	}
+	if (!vertices || !polygons) ERROR_LOG(RENDERER, "Voot geometry parsed evidence write failed");
+	vootDrawTrace.clear();
+	vootDrawTrace.open(vootGeometryPrefix + ".draws.csv");
+	vootDrawTrace.imbue(std::locale::classic());
+	vootDrawTrace << "list,first,count,cull,depth,tileclip\n";
+	NOTICE_LOG(RENDERER, "Voot geometry evidence captured: %s", vootGeometryPrefix.c_str());
+}
+#endif
 
 void os_VideoRoutingTermDX();
 
@@ -272,6 +362,30 @@ void DX11Renderer::resize(int w, int h)
 
 	// Create depth stencil texture
 	createDepthTexAndView(depthTex, depthTexView, width, height);
+#ifdef FLYCAST_VOOT_RENDER_DIAGNOSTICS
+	if (fbTex)
+	{
+		D3D11_TEXTURE2D_DESC actual{};
+		fbTex->GetDesc(&actual);
+		NOTICE_LOG(RENDERER, "RenderTarget backend=DX11 requested=%ux%u actual=%ux%u output=%dx%d resolution=%d wide=%d super=%d",
+			width, height, actual.Width, actual.Height, settings.display.width, settings.display.height,
+			config::RenderResolution.get(), config::Widescreen.get(), config::SuperWidescreen.get());
+		// Query the actual output texture; a requested window size is not allocation proof.
+		auto& outputView = DX11Context::Instance()->getRenderTarget();
+		if (outputView)
+		{
+			ComPtr<ID3D11Resource> resource;
+			outputView->GetResource(&resource.get());
+			ComPtr<ID3D11Texture2D> outputTexture;
+			if (resource && SUCCEEDED(resource->QueryInterface(__uuidof(ID3D11Texture2D), (void**)&outputTexture.get())))
+			{
+				D3D11_TEXTURE2D_DESC output{};
+				outputTexture->GetDesc(&output);
+				NOTICE_LOG(RENDERER, "OutputBuffer backend=DX11 actual=%ux%u", output.Width, output.Height);
+			}
+		}
+	}
+#endif
 
 	frameRendered = false;
 	frameRenderedOnce = false;
@@ -328,6 +442,9 @@ void DX11Renderer::Process(TA_context* ctx)
 		DX11Context::Instance()->setSwapInterval(ctx->rend.swapInterval);
 
 	ta_parse(ctx, true);
+#ifdef FLYCAST_VOOT_RENDER_DIAGNOSTICS
+	traceVootGeometry(ctx);
+#endif
 }
 
 void DX11Renderer::resetContextState()
@@ -388,14 +505,83 @@ void DX11Renderer::configVertexShader()
 
 void DX11Renderer::uploadGeometryBuffers()
 {
+#ifdef FLYCAST_VOOT_RENDER_DIAGNOSTICS
+	if (!vootGeometryPrefix.empty())
+	{
+		std::ofstream indices(vootGeometryPrefix + ".indices.csv");
+		indices.imbue(std::locale::classic());
+		indices << "offset,vertex\n";
+		for (size_t i = 0; i < rendContext->idx.size(); i++) indices << i << ',' << rendContext->idx[i] << '\n';
+		std::ofstream matrix(vootGeometryPrefix + ".matrix.csv");
+		matrix.imbue(std::locale::classic());
+		matrix.precision(9);
+		for (int r = 0; r < 4; r++) {
+			for (int c = 0; c < 4; c++) matrix << (c ? "," : "") << matrices.GetViewportMatrix()[c][r];
+			matrix << '\n';
+		}
+		if (!indices || !matrix) ERROR_LOG(RENDERER, "Voot geometry upload evidence write failed");
+	}
+#endif
 	setFirstProvokingVertex(*rendContext);
 
-	size_t size = rendContext->verts.size() * sizeof(decltype(*rendContext->verts.data()));
+	vootTitleBackground = nullptr;
+	vootTitleSidesDrawn = false;
+	Vertex titleSides[8];
+	if (vootWideClip && !config::CustomTextures)
+		for (const PolyParam& poly : rendContext->global_param_tr)
+		{
+			if (poly.pcw.full != 0x828e0008 || poly.isp.full != 0x8a000000 || poly.count != 4 || poly.first + 4 > rendContext->verts.size()
+					|| poly.tcw.full != 0x36157900 || poly.tsp.full != 0x94b0047e || poly.tileclip != 0x201a04c0
+					|| !poly.texture || !matrices.getVootTitleSideFill(&rendContext->verts[poly.first], titleSides))
+				continue;
+			poly.texture->ComputeHash();
+			// Content and palette identity prevent reuse of this VRAM slot by another screen.
+			if (poly.texture->texture_hash != 0xcc95911c)
+				continue;
+			vootTitleBackground = &poly;
+			vootTitleFirstVertex = rendContext->verts.size();
+			break;
+		}
+#ifdef FLYCAST_VOOT_RENDER_DIAGNOSTICS
+	static bool previousTitle = false;
+	static unsigned titleTransitions = 0;
+	if (previousTitle != (vootTitleBackground != nullptr) && titleTransitions++ < 16)
+		NOTICE_LOG(RENDERER, "VootTitleSides active=%d target=%ux%u", vootTitleBackground != nullptr, rendContext->framebufferWidth, rendContext->framebufferHeight);
+	previousTitle = vootTitleBackground != nullptr;
+#endif
+	const size_t originalSize = rendContext->verts.size() * sizeof(decltype(*rendContext->verts.data()));
+	size_t size = originalSize + (vootTitleBackground ? sizeof(titleSides) : 0);
 	bool rc = ensureBufferSize(vertexBuffer, D3D11_BIND_VERTEX_BUFFER, vertexBufferSize, size);
 	verify(rc);
 	D3D11_MAPPED_SUBRESOURCE mappedSubres;
 	deviceContext->Map(vertexBuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedSubres);
-	memcpy(mappedSubres.pData, rendContext->verts.data(), size);
+	memcpy(mappedSubres.pData, rendContext->verts.data(), originalSize);
+	if (vootTitleBackground)
+		memcpy(static_cast<u8*>(mappedSubres.pData) + originalSize, titleSides, sizeof(titleSides));
+	if (vootWideClip && rendContext->verts.size() >= 4 && !rendContext->global_param_op.empty())
+	{
+		const auto& background = rendContext->global_param_op.front();
+		// FillBGP owns the first four vertices. Extend its flat clear plane only in
+		// the upload copy; guest geometry, textured art and the TA context stay intact.
+		if (background.first == 0 && background.count == 4 && !background.pcw.Texture)
+		{
+			Vertex vertices[4];
+			memcpy(vertices, rendContext->verts.data(), sizeof(vertices));
+			if (matrices.expandBackground(vertices))
+			{
+				memcpy(mappedSubres.pData, vertices, sizeof(vertices));
+#ifdef FLYCAST_VOOT_RENDER_DIAGNOSTICS
+				static bool reported = false;
+				if (!reported)
+				{
+					NOTICE_LOG(RENDERER, "VootBackground target=%ux%u x=%g:%g uniform=1 textured=0",
+						rendContext->framebufferWidth, rendContext->framebufferHeight, vertices[0].x, vertices[1].x);
+					reported = true;
+				}
+#endif
+			}
+		}
+	}
 	deviceContext->Unmap(vertexBuffer, 0);
 
 	size = rendContext->idx.size() * sizeof(decltype(*rendContext->idx.data()));
@@ -501,6 +687,43 @@ bool DX11Renderer::Render()
 	setupPixelShaderConstants();
 
 	drawStrips();
+
+#ifdef FLYCAST_VOOT_RENDER_DIAGNOSTICS
+	// Read back a bounded set of exact frames before window restoration or resampling.
+	static unsigned capturedFrames = 0;
+	const char* captureFrames = std::getenv("FLYCAST_VOOT_FRAME_CAPTURE");
+	if (!is_rtt && !vootGeometryPrefix.empty() && captureFrames && std::strcmp(captureFrames, "1") == 0 && capturedFrames < 4)
+	{
+		D3D11_TEXTURE2D_DESC desc{};
+		fbTex->GetDesc(&desc);
+		desc.Usage = D3D11_USAGE_STAGING;
+		desc.BindFlags = 0;
+		desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+		desc.MiscFlags = 0;
+		ComPtr<ID3D11Texture2D> capture;
+		if (SUCCEEDED(device->CreateTexture2D(&desc, nullptr, &capture.get())))
+		{
+			deviceContext->CopyResource(capture, fbTex);
+			D3D11_MAPPED_SUBRESOURCE pixels{};
+			if (SUCCEEDED(deviceContext->Map(capture, 0, D3D11_MAP_READ, 0, &pixels)))
+			{
+				std::ofstream frame(vootGeometryPrefix + ".frame.ppm", std::ios::binary);
+				frame.imbue(std::locale::classic());
+				frame << "P6\n" << desc.Width << ' ' << desc.Height << "\n255\n";
+				for (u32 y = 0; y < desc.Height; y++)
+					for (u32 x = 0; x < desc.Width; x++)
+					{
+						const u8* p = static_cast<const u8*>(pixels.pData) + y * pixels.RowPitch + x * 4;
+						const char rgb[] = { char(p[2]), char(p[1]), char(p[0]) };
+						frame.write(rgb, sizeof(rgb));
+					}
+				deviceContext->Unmap(capture, 0);
+				if (!frame) ERROR_LOG(RENDERER, "Voot frame evidence write failed");
+				capturedFrames++;
+			}
+		}
+	}
+#endif
 
 	if (is_rtt)
 	{
@@ -608,7 +831,7 @@ void DX11Renderer::setCullMode(int mode)
 
 TileClipping DX11Renderer::setTileClip(u32 tileclip, Rect& clip_rect)
 {
-	TileClipping clipmode = matrices.getTileClip(tileclip, clip_rect);
+	TileClipping clipmode = matrices.getTileClip(tileclip, clip_rect, vootWideClip);
 	if (clipmode == TileClipping::Outside) {
 		RECT rect { clip_rect.origin.x, clip_rect.origin.y,
 			clip_rect.origin.x + clip_rect.size.x, clip_rect.origin.y + clip_rect.size.y };
@@ -739,6 +962,17 @@ void DX11Renderer::setRenderState(const PolyParam *gp)
 		n2Helper.setConstants(*gp, 0, *rendContext); // poly number only used in OIT
 }
 
+void DX11Renderer::drawVootTitleSides(const PolyParam* params, D3D11_PRIMITIVE_TOPOLOGY resumeTopology)
+{
+	if (params != vootTitleBackground || vootTitleSidesDrawn)
+		return;
+	deviceContext->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
+	deviceContext->Draw(4, vootTitleFirstVertex);
+	deviceContext->Draw(4, vootTitleFirstVertex + 4);
+	deviceContext->IASetPrimitiveTopology(resumeTopology);
+	vootTitleSidesDrawn = true;
+}
+
 template <u32 Type, bool SortingEnabled>
 void DX11Renderer::drawList(const std::vector<PolyParam>& gply, int first, int count)
 {
@@ -759,7 +993,12 @@ void DX11Renderer::drawList(const std::vector<PolyParam>& gply, int first, int c
 				continue;
 			}
 			setRenderState<Type, SortingEnabled>(params);
+			drawVootTitleSides(params, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
 			deviceContext->DrawIndexed(params->count, params->first, 0);
+#ifdef FLYCAST_VOOT_RENDER_DIAGNOSTICS
+			if (vootDrawTrace.is_open())
+				vootDrawTrace << Type << ',' << params->first << ',' << params->count << ',' << params->isp.CullMode << ',' << params->isp.DepthMode << ',' << params->tileclip << '\n';
+#endif
 		}
 
 		params++;
@@ -776,7 +1015,12 @@ void DX11Renderer::drawSorted(int first, int count, bool multipass)
 	{
 		const PolyParam* params = &rendContext->global_param_tr[rendContext->sortedTriangles[p].polyIndex];
 		setRenderState<ListType_Translucent, true>(params);
+		drawVootTitleSides(params, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 		deviceContext->DrawIndexed(rendContext->sortedTriangles[p].count, rendContext->sortedTriangles[p].first, 0);
+#ifdef FLYCAST_VOOT_RENDER_DIAGNOSTICS
+		if (vootDrawTrace.is_open())
+			vootDrawTrace << ListType_Translucent << ',' << rendContext->sortedTriangles[p].first << ',' << rendContext->sortedTriangles[p].count << ',' << params->isp.CullMode << ',' << params->isp.DepthMode << ',' << params->tileclip << '\n';
+#endif
 	}
 	if (multipass && config::TranslucentPolygonDepthMask)
 	{
@@ -1048,7 +1292,56 @@ void DX11Renderer::RenderFramebuffer(const FramebufferInfo& info)
 
 void DX11Renderer::setBaseScissor()
 {
+	vootWideClip = config::VootWidescreenClipping && config::Widescreen && !config::Rotate90
+		&& !config::EmulateFramebuffer && !rendContext->isRTT && settings.platform.isNaomi()
+		&& settings.content.gameId == "VIRTUAL-ON ORATORIO TANGRAM";
 	Rect scissor = matrices.getBaseScissor();
+#ifdef FLYCAST_VOOT_RENDER_DIAGNOSTICS
+	// Bounded observation only: submitted vertices are never rewritten.
+	if (!rendContext->isRTT && settings.content.gameId == "VIRTUAL-ON ORATORIO TANGRAM")
+	{
+		static unsigned samples = 0;
+		static u32 nextFrame = 0, previousFrame = 0;
+		static auto previousTime = std::chrono::steady_clock::now();
+		if (samples < 20 && MainFrameCount >= nextFrame)
+		{
+			auto now = std::chrono::steady_clock::now();
+			double seconds = std::chrono::duration<double>(now - previousTime).count();
+			float minX = 1.e20f, maxX = -1.e20f, minY = 1.e20f, maxY = -1.e20f;
+			unsigned outside = 0;
+			for (const auto& v : rendContext->verts)
+			{
+				if (!std::isfinite(v.x) || !std::isfinite(v.y)) continue;
+				minX = std::min(minX, v.x); maxX = std::max(maxX, v.x);
+				minY = std::min(minY, v.y); maxY = std::max(maxY, v.y);
+				outside += v.x < 0 || v.x >= rendContext->globClip.x;
+			}
+			const auto& m = matrices.GetViewportMatrix();
+			NOTICE_LOG(RENDERER, "VootRender frame=%u target=%ux%u output=%dx%d global=%dx%d fb=%d,%d,%d,%d tile=%d,%d,%d,%d scissor=%d,%d,%d,%d vertices=%u outsideX=%u x=%g:%g y=%g:%g map=%g,%g,%g,%g mainFPS=%.3f",
+				MainFrameCount, rendContext->framebufferWidth, rendContext->framebufferHeight, settings.display.width, settings.display.height,
+				rendContext->globClip.x, rendContext->globClip.y,
+				rendContext->fbClip.origin.x, rendContext->fbClip.origin.y, rendContext->fbClip.size.x, rendContext->fbClip.size.y,
+				rendContext->tileClip.origin.x, rendContext->tileClip.origin.y, rendContext->tileClip.size.x, rendContext->tileClip.size.y,
+				scissor.origin.x, scissor.origin.y, scissor.size.x, scissor.size.y,
+				(unsigned)rendContext->verts.size(), outside, minX, maxX, minY, maxY, m[0][0], m[1][1], m[3][0], m[3][1],
+				samples == 0 || seconds <= 0 ? 0.0 : (MainFrameCount - previousFrame) / seconds);
+			std::map<u32, unsigned> clips;
+			for (const auto* list : { &rendContext->global_param_op, &rendContext->global_param_pt, &rendContext->global_param_tr })
+				for (const auto& poly : *list) clips[poly.tileclip] += poly.count;
+			unsigned clipSamples = 0;
+			for (const auto& entry : clips)
+			{
+				if (clipSamples++ == 8) break;
+				Rect projected{};
+				auto mode = matrices.getTileClip(entry.first, projected, vootWideClip);
+				NOTICE_LOG(RENDERER, "VootClip frame=%u raw=%08x mode=%d rect=%d,%d,%d,%d indices=%u",
+					MainFrameCount, entry.first, (int)mode, projected.origin.x, projected.origin.y,
+					projected.size.x, projected.size.y, entry.second);
+			}
+			previousTime = now; previousFrame = MainFrameCount; nextFrame = MainFrameCount + 300; samples++;
+		}
+	}
+#endif
 	scissorRect.left = scissor.origin.x;
 	scissorRect.top = scissor.origin.y;
 	// DX11 scissor bottom right pixel is clipped

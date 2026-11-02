@@ -92,6 +92,10 @@ protected:
 	void createTexAndRenderTarget(ComPtr<ID3D11Texture2D>& texture, ComPtr<ID3D11RenderTargetView>& renderTarget, int width, int height);
 	void configVertexShader();
 	void uploadGeometryBuffers();
+	void drawVootTitleSides(const PolyParam* params, D3D11_PRIMITIVE_TOPOLOGY resumeTopology);
+	const PolyParam* vootTitleBackground = nullptr;
+	u32 vootTitleFirstVertex = 0;
+	bool vootTitleSidesDrawn = false;
 	void setupPixelShaderConstants();
 	void updateFogTexture();
 	void updatePaletteTexture();
@@ -176,4 +180,5 @@ private:
 	ComPtr<ID3D11Buffer> vtxConstants;
 	ComPtr<ID3D11Buffer> pxlConstants;
 	bool scissorEnable = false;
+	bool vootWideClip = false;
 };
