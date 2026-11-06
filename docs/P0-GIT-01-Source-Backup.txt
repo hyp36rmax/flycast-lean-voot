@@ -41,3 +41,27 @@ Retain LICENSE and vendor notices. Do not distribute a runtime without the appli
 corresponding source and required notices. Existing upstream UWP signing certificate and
 text-only GDI layout test fixtures are inherited upstream; no local signing password is stored.
 Never use upstream UWP signing credentials; the Windows Release build does not use that cert.
+
+VERIFIED RECOVERY DETAILS
+For exact Golden file hashes, disable automatic line-ending conversion at clone time:
+git clone -c core.autocrlf=false -c core.longpaths=true --branch <accepted-tag> <private-url> <fresh-folder>
+The Windows default core.autocrlf=true changes some checkout bytes without changing logic.
+The accepted tags above remain fixed; later backup-branch commits add documentation only.
+Both original Windows Release source builds succeeded. The integrated Experience also embeds
+the rebuilt runtime with CabinetInputProtocol=3, GuestPauseProtocol=1, WindowInputProtocol=1,
+and the retained Solo/Local VS capability flags. No binary-for-binary equivalence is claimed.
+The default EEPROM seed was omitted for initial source compilation, then restored separately
+from the verified Golden private build inputs for the integrated package and capability tests.
+It is protected local data, never part of either Git repository or vendor-source archive.
+
+Offline dependency source is also backed up in this PRIVATE repository on backup/vendor-sources.
+Clone that branch into a separate folder. Its source-dependencies/manifest.json records part
+hashes, archive hash, all source-file hashes and excluded unused binary packages/test keys.
+Concatenate source-dependencies/Flycast-vendor-source.zip.part* in ordinal order as raw bytes;
+verify the reconstructed archive hash, then extract it into the accepted runtime checkout.
+Recovery branch commit: e6ab144d80eb986b1eb1d49bdbaf46ea590d94fd
+Dependency source archive SHA256: 2DBEA744CB1FED3ECFD970EEAA0D31F884A80161773CD62DCFFC357D89880C82
+The full pre-filter working vendor archive remains in the protected local backup; the remote
+recovery archive excludes 72 unused upstream binary packages or protected/test-key files.
+Normal Windows process permissions were required for MSBuild; the restricted build stalled.
+Use: cmake --build <fresh-build> --config Release --target flycast --parallel 4 -- /nodeReuse:false
