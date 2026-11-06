@@ -69,6 +69,7 @@ void NaomiNetwork::createSocket()
 	sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
 	if (sock == INVALID_SOCKET)
 	{
+		naomi_network_trace::event("socket_failed",sock,nullptr,-1,-1,0,-1,get_last_error());
 		ERROR_LOG(NETWORK, "Socket creation failed: errno %d", get_last_error());
 		throw Exception("Socket creation failed");
 	}
@@ -81,11 +82,13 @@ void NaomiNetwork::createSocket()
 
 	if (::bind(sock, (sockaddr *)&serveraddr, sizeof(serveraddr)) < 0)
 	{
+		naomi_network_trace::event("bind_failed",sock,&serveraddr,-1,-1,0,-1,get_last_error());
 		ERROR_LOG(NETWORK, "NaomiServer: bind() failed. errno=%d", get_last_error());
 		closesocket(sock);
 
 		throw Exception("Socket bind failed");
 	}
+	naomi_network_trace::event("bound_udp",sock);
 	set_non_blocking(sock);
 
     // Allow broadcast packets to be sent
@@ -102,6 +105,7 @@ bool NaomiNetwork::startNetwork()
 	slotId = 0;
 	slotCount = 0;
 	slaves.clear();
+	naomi_network_trace::event("handshake_start",sock,nullptr,-1,-1,0,config::ActAsServer?1:0,0,slotId,slotCount);
 
 	using namespace std::chrono;
 
@@ -149,6 +153,7 @@ bool NaomiNetwork::startNetwork()
 
 			os_notify(T("Starting game"), 2000);
 			setNaomiNetworkConfig(0, slotCount);
+			naomi_network_trace::event("handshake_complete",sock,&nextPeer,-1,-1,0,1,0,slotId,slotCount);
 
 			return true;
 		}
@@ -206,9 +211,11 @@ bool NaomiNetwork::startNetwork()
 		if (!networkStopping && _startNow)
 		{
 			setNaomiNetworkConfig(slotId, slotCount, config::NaomiSatellite && satelliteSupported);
+			naomi_network_trace::event("handshake_complete",sock,&nextPeer,-1,-1,0,1,0,slotId,slotCount);
 			return true;
 		}
 	}
+	naomi_network_trace::event(networkStopping?"handshake_cancelled":"handshake_timeout",sock,nullptr,-1,-1,0,0,0,slotId,slotCount);
 	return false;
 }
 
@@ -270,6 +277,7 @@ bool NaomiNetwork::receive(const sockaddr_in *addr, const Packet *packet, u32 si
 			nextPeer.sin_family = AF_INET;
 			nextPeer.sin_port = packet->sync.nextNodePort;
 			nextPeer.sin_addr.s_addr = packet->sync.nextNodeIp == 0 ? addr->sin_addr.s_addr : packet->sync.nextNodeIp;
+			naomi_network_trace::event("slave_route_assigned",sock,&nextPeer,SyncReply,-1,(int)size,1,0,slotId,slotCount);
 			std::string notif = strprintf(T("Connected as slot %d"), slotId);
 			os_notify(notif.c_str(), 2000);
 		}
@@ -285,8 +293,10 @@ bool NaomiNetwork::receive(const sockaddr_in *addr, const Packet *packet, u32 si
 		break;
 
 	case Data:
-		if (!receivedData.empty())
+		if (!receivedData.empty()) {
+			naomi_network_trace::event("rx_overwrite_pending",sock,addr,Data,packet->data.packetNumber,(int)size,0,0,slotId,slotCount,(int)receivedData.size());
 			INFO_LOG(NETWORK, "Received packet overwritten");
+		}
 		receivedData.resize(size - packet->size(0));
 		memcpy(receivedData.data(), packet->data.payload, receivedData.size());
 		packetNumber = packet->data.packetNumber;
@@ -373,6 +383,7 @@ void setNaomiNetworkConfig(int node, int nodeCount, bool satellite)
 				v = 1;
 			break;
 		}
+		naomi_network_trace::event("voot_runtime_role",INVALID_SOCKET,nullptr,-1,-1,0,(int)v,0,node,nodeCount,(int)read_naomi_eeprom(0x45));
 		write_naomi_eeprom(0x45, v);
 	}
 	else if (gameId == "WAVE RUNNER GP")

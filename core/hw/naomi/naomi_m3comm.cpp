@@ -84,6 +84,7 @@ void NaomiM3Comm::closeNetwork()
 	comm_status2 = 0;
 	memset(m68k_ram, 0, 128_KB);
 	memset(comm_ram, 0, 128_KB);
+	naomi_network_trace::event("comm_closed",INVALID_SOCKET,nullptr,-1,packet_number,0,0,0,slot_id,slot_count);
 	packet_number = 0;
 	slot_count = 0;
 	slot_id = 0;
@@ -115,6 +116,7 @@ bool NaomiM3Comm::receiveNetwork()
 
 	*(u16*)&comm_ram[6] = swap16(packetNumber);
 	memcpy(&comm_ram[0x100 + slot_size], buf.get(), packet_size);
+	if(packetNumber<8||packetNumber%300==0)naomi_network_trace::event("comm_rx_delivered",INVALID_SOCKET,nullptr,-1,packetNumber,(int)packet_size,1,0,slot_id,slot_count,(int)slot_size);
 
 	return true;
 }
@@ -122,6 +124,7 @@ bool NaomiM3Comm::receiveNetwork()
 void NaomiM3Comm::sendNetwork()
 {
 	const u32 packet_size = swap16(*(u16*)&m68k_ram[0x204]) * slot_count;
+	if(packet_number<8||packet_number%300==0)naomi_network_trace::event("comm_tx",INVALID_SOCKET,nullptr,-1,packet_number,(int)packet_size,0,0,slot_id,slot_count);
 	naomiNetwork.send(&comm_ram[0x100], packet_size, packet_number);
 	packet_number++;
 }
@@ -194,6 +197,7 @@ void NaomiM3Comm::connectedState()
 
 	comm_status1 = 0xff01;	// But 1 at connect time before f000 is read
 	comm_status2 = (slotCount << 8) | slot_id;
+	naomi_network_trace::event("comm_connected",INVALID_SOCKET,nullptr,-1,packet_number,(int)(slot_size*slot_count),1,0,slot_id,slot_count,(int)slot_size);
 }
 
 void NaomiM3Comm::WriteMem(u32 address, u32 data, u32 size)
@@ -210,6 +214,7 @@ void NaomiM3Comm::WriteMem(u32 address, u32 data, u32 size)
 		// bit 15: 0 - enable / 1 - disable this device ???
 		if ((comm_ctrl & COMM_CTRL_RESET) == 0 && (data & COMM_CTRL_RESET) != 0)
 		{
+			naomi_network_trace::event("comm_reset",INVALID_SOCKET,nullptr,-1,packet_number,0,0,0,slot_id,slot_count,(int)data);
 			DEBUG_LOG(NAOMI, "COMM_CTRL m68k reset");
 			memset(&comm_ram[0], 0, 32);
 			comm_status1 = 0; // varies...
@@ -324,6 +329,7 @@ void NaomiM3Comm::vblank()
 #if defined(FLYCAST_VOOT_RENDER_DIAGNOSTICS) && defined(_WIN32)
 			++timeouts;
 #endif
+			static unsigned missing=0;if(++missing<=8||missing%300==0)naomi_network_trace::event("comm_receive_timeout",INVALID_SOCKET,nullptr,-1,packet_number,0,0,0,slot_id,slot_count,(int)missing);
 			INFO_LOG(NETWORK, "No data received");
 		}
 #if defined(FLYCAST_VOOT_RENDER_DIAGNOSTICS) && defined(_WIN32)
@@ -336,6 +342,7 @@ void NaomiM3Comm::vblank()
 #endif
 		sendNetwork();
 	} catch (const FlycastException& e) {
+		naomi_network_trace::event("comm_network_exception",INVALID_SOCKET,nullptr,-1,packet_number,0,-1,0,slot_id,slot_count);
 		comm_status1 = 0;
 		comm_status2 = 0;
 	}
