@@ -1,0 +1,1 @@
+Fetch private branch backup/vendor-sources. Verify each part hash from manifest.json. Concatenate the part files in ordinal order using binary reads/writes. Verify archiveSha256, then extract into the accepted runtime checkout. Use the P0-GIT-01 report build commands. Never run inside a Golden Reference. No protected game/BIOS/EEPROM data or personal saves is included.
