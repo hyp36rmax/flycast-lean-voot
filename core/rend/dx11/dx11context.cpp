@@ -17,6 +17,7 @@
     along with Flycast.  If not, see <https://www.gnu.org/licenses/>.
 */
 #include "dx11context.h"
+#include "hosted_startup.h"
 #include "rend/frame_delivery_trace.h"
 #ifdef FLYCAST_VOOT_RENDER_DIAGNOSTICS
 #include <fstream>
@@ -270,6 +271,11 @@ void DX11Context::Present()
 	else {
 		hr = swapchain->Present(0, allowTearing ? DXGI_PRESENT_ALLOW_TEARING : DXGI_PRESENT_DO_NOT_WAIT);
 	}
+    if (hr == S_OK && swapchain) {
+        DXGI_SWAP_CHAIN_DESC description{};
+        if (SUCCEEDED(swapchain->GetDesc(&description)))
+            hosted_startup::aspect_presented(description.BufferDesc.Width, description.BufferDesc.Height);
+    }
 #ifdef FLYCAST_VOOT_RENDER_DIAGNOSTICS
 	if (deliveryStart) {
 		using namespace frame_delivery_trace;

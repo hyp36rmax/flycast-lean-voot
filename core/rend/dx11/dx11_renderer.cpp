@@ -17,6 +17,7 @@
     along with Flycast.  If not, see <https://www.gnu.org/licenses/>.
 */
 #include "dx11_renderer.h"
+#include "hosted_startup.h"
 #include "hw/pvr/ta_parse_profile.h"
 #include "hw/pvr/ta_triangle_sort.h"
 #include "dx11context.h"
@@ -870,6 +871,7 @@ bool DX11Renderer::Render()
 #ifdef FLYCAST_VOOT_RENDER_DIAGNOSTICS
 	if (!is_rtt) recordRenderPerformance(*rendContext);
 #endif
+	if (!is_rtt && !config::EmulateFramebuffer) hosted_startup::aspect_rendered(width, height);
 	return !is_rtt;
 }
 

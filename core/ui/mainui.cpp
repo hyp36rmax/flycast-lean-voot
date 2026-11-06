@@ -18,6 +18,7 @@
 */
 
 #include "mainui.h"
+#include "hosted_startup.h"
 #include "hw/pvr/Renderer_if.h"
 #include "gui.h"
 #include "oslib/oslib.h"
@@ -41,6 +42,7 @@ bool mainui_rend_frame()
 
 	os_DoEvents();
 	os_UpdateInputState();
+	if (hosted_startup::guest_paused()) { std::this_thread::sleep_for(std::chrono::milliseconds(8)); return false; }
 
 	if (gui_is_open())
 	{

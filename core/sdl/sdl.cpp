@@ -48,6 +48,19 @@ static u32 windowFlags;
 
 static std::unordered_map<u32, std::shared_ptr<SDLMouse>> sdl_mice;
 static std::shared_ptr<SDLKeyboardDevice> sdl_keyboard;
+
+// Native host supplies one complete normalized state through its owned HWND.
+// Acknowledgment means the existing keyboard/JVS adapter accepted the state,
+// not that a particular guest scene consumed Start or another action.
+bool sdl_hosted_contacts(unsigned mask) {
+	if (!sdl_keyboard || config::UseRawInput) return false;
+	static unsigned previous = 0;
+	static const int codes[] = {26,22,4,7,12,14,13,15,20,8,29,6,19,25,5};
+	for (unsigned bit = 0; bit < 15; ++bit)
+		if ((previous ^ mask) & (1u << bit)) sdl_keyboard->input(static_cast<SDL_Scancode>(codes[bit]), (mask & (1u << bit)) != 0);
+	previous = mask;
+	return true;
+}
 static bool window_fullscreen;
 static bool window_maximized;
 static SDL_Rect windowPos { SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, WINDOW_WIDTH, WINDOW_HEIGHT };
@@ -112,6 +125,10 @@ static void sdl_close_joystick(SDL_JoystickID instance)
 
 static void setWindowTitleGame()
 {
+	if (hosted_startup::enabled()) {
+		SDL_SetWindowTitle(window, "Project OT");
+		return;
+	}
 	std::string title = config::loadStr("window", "title");
 	if (title.empty())
 	{
@@ -143,7 +160,7 @@ static void captureMouse(bool capture)
 		{
 			if (config::UseRawInput)
 				SDL_ShowCursor(SDL_DISABLE);
-			SDL_SetWindowTitle(window, "Flycast - mouse capture");
+			SDL_SetWindowTitle(window, hosted_startup::enabled() ? "Project OT" : "Flycast - mouse capture");
 			mouseCaptured = true;
 		}
 	}
@@ -154,7 +171,7 @@ static void emuEventCallback(Event event, void *)
 	switch (event)
 	{
 	case Event::Terminate:
-		SDL_SetWindowTitle(window, "Flycast");
+		SDL_SetWindowTitle(window, hosted_startup::enabled() ? "Project OT" : "Flycast");
 		sdl_stopHaptic(0);
 		break;
 	case Event::Pause:
@@ -341,6 +358,7 @@ void input_sdl_handle()
 			case SDL_KEYDOWN:
 			case SDL_KEYUP:
 				if (hosted_startup::enabled()) {
+					if (hosted_startup::window_input_enabled()) break;
 					if (!config::UseRawInput) sdl_keyboard->input(event.key.keysym.scancode, event.type == SDL_KEYDOWN);
 					break;
 				}
@@ -849,7 +867,7 @@ bool sdl_recreate_window(u32 flags)
 		if (!hosted_startup::accepts_input()) flags |= SDL_WINDOW_HIDDEN;
 	}
 	windowFlags = flags;
-	window = SDL_CreateWindow("Flycast", windowPos.x, windowPos.y,
+	window = SDL_CreateWindow(hosted_startup::enabled() ? "Project OT" : "Flycast", windowPos.x, windowPos.y,
 			windowPos.w * hdpiScaling, windowPos.h * hdpiScaling, flags);
 	if (window == nullptr)
 	{

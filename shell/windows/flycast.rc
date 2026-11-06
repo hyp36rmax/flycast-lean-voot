@@ -22,13 +22,22 @@ BEGIN
   BEGIN
     BLOCK "040904E4"
     BEGIN
+#ifdef OT_LEAN_RUNTIME
+      VALUE "CompanyName", "Project OT contributors"
+      VALUE "FileDescription", "Project OT Lean Runtime"
+#else
       VALUE "CompanyName", "Flycast Team"
       VALUE "FileDescription", "Flycast"
+#endif
       VALUE "FileVersion", GIT_VERSION
       VALUE "InternalName", "flycast"
       VALUE "LegalCopyright", "Copyright various authors. Released under the GNU General Public License."
       VALUE "OriginalFilename", "flycast.exe"
+#ifdef OT_LEAN_RUNTIME
+      VALUE "ProductName", "Project OT Lean Runtime"
+#else
       VALUE "ProductName", "Flycast is a multiplatform Sega Dreamcast, Naomi and Atomiswave emulator"
+#endif
       VALUE "ProductVersion", GIT_VERSION
     END
   END

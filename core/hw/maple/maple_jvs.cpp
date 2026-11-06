@@ -17,6 +17,7 @@
 	 along with flycast.  If not, see <https://www.gnu.org/licenses/>.
  */
 #include "maple_devs.h"
+#include "hosted_startup.h"
 #include "maple_if.h"
 #include "hw/naomi/naomi_cart.h"
 #include <xxhash.h>
@@ -2197,13 +2198,14 @@ u32 jvs_io_board::handle_jvs_message(const u8 *buffer_in, u32 length_in, u8 *buf
 		{
 			LOGJVS("JVS Node %d: ", node_id);
 			u32 buttons[4] {};
+            const u32 inputCodes[4]={hosted_startup::cabinet_input(mapleInputState[0].kcode),mapleInputState[1].kcode,mapleInputState[2].kcode,mapleInputState[3].kcode};
 #ifdef LIBRETRO
 			for (int p = 0; p < 4; p++)
-				buttons[p] = ~mapleInputState[p].kcode;
+				buttons[p] = ~inputCodes[p];
 #else
 			for (u32 i = 0; i < std::size(naomi_button_mapping); i++)
 				for (int p = 0; p < 4; p++)
-					if ((mapleInputState[p].kcode & (1 << i)) == 0)
+					if ((inputCodes[p] & (1 << i)) == 0)
 						buttons[p] |= naomi_button_mapping[i];
 #endif
 			for (u32& button : buttons)
@@ -2225,6 +2227,7 @@ u32 jvs_io_board::handle_jvs_message(const u8 *buffer_in, u32 length_in, u8 *buf
 
 						u32 inputs[4];
 						read_digital_in(buttons, inputs);
+                        hosted_startup::input_sampled(inputCodes[0],inputs[0]);
 						JVS_OUT((inputs[0] & NAOMI_TEST_KEY) ? 0x80 : 0x00); // test, tilt1, tilt2, tilt3, unused, unused, unused, unused
 						LOGJVS("btns ");
 						for (int player = 0; player < buffer_in[cmdi + 1]; player++)
