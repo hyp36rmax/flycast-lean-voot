@@ -20,6 +20,7 @@
  */
 #pragma once
 #include "types.h"
+#include <chrono>
 
 class NaomiM3Comm
 {
@@ -47,6 +48,11 @@ private:
 	u8 m68k_ram[128_KB];
 	u8 comm_ram[128_KB];
 	u16 packet_number = 0;
+	std::chrono::steady_clock::time_point trace_last_vblank{};
+	unsigned trace_timeout_run = 0;
+	unsigned trace_vblanks = 0;
+	unsigned trace_b002_reads = 0;
+	unsigned trace_status_changes = 0;
 
 	int slot_count = 0;
 	int slot_id = 0;

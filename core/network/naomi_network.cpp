@@ -53,7 +53,8 @@ bool NaomiNetwork::init()
 {
 	if (!config::NetworkEnable)
 		return false;
-	if (config::EnableUPnP)
+	loopbackOnly = config::NaomiLoopbackOnly;
+	if (config::EnableUPnP && !loopbackOnly)
 	{
 		miniupnp.Init();
 		miniupnp.AddPortMapping(config::LocalPort, true);
@@ -69,27 +70,59 @@ void NaomiNetwork::createSocket()
 	sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
 	if (sock == INVALID_SOCKET)
 	{
+		naomi_network_trace::event("socket_failed",sock,nullptr,-1,-1,0,-1,get_last_error());
 		ERROR_LOG(NETWORK, "Socket creation failed: errno %d", get_last_error());
 		throw Exception("Socket creation failed");
 	}
+#if defined(_WIN32) && defined(FLYCAST_HOSTED_STARTUP)
+	// Hosted LAN only: a jumbo local NIC must not emit oversized IP packets
+	// onto a standard-Ethernet peer path. Windows fragments the original UDP
+	// datagram; the NAOMI payload and receiving protocol remain unchanged.
+	const char *safeMtu = std::getenv("PROJECTOT_LAN_SAFE_MTU");
+	if (safeMtu != nullptr && std::string(safeMtu) == "1"
+			&& settings.content.gameId == "VIRTUAL-ON ORATORIO TANGRAM")
+	{
+		const DWORD mtu = 1500;
+		const DWORD dontFragment = 0;
+		const int mtuResult = setsockopt(sock, IPPROTO_IP, IP_USER_MTU, (const char *)&mtu, sizeof(mtu));
+		const int mtuError = mtuResult == 0 ? 0 : get_last_error();
+		const int fragmentResult = setsockopt(sock, IPPROTO_IP, IP_DONTFRAGMENT, (const char *)&dontFragment, sizeof(dontFragment));
+		const int fragmentError = fragmentResult == 0 ? 0 : get_last_error();
+		DWORD effectiveMtu = 0;
+		int size = sizeof(effectiveMtu);
+		const int queryResult = getsockopt(sock, IPPROTO_IP, IP_USER_MTU, (char *)&effectiveMtu, &size);
+		const bool applied = mtuResult == 0 && fragmentResult == 0 && queryResult == 0 && effectiveMtu == mtu;
+		naomi_network_trace::event("lan_socket_mtu", sock, nullptr, -1, -1, effectiveMtu,
+			applied ? 1 : 0, mtuError != 0 ? mtuError : fragmentError);
+		if (!applied)
+		{
+			closesocket(sock);
+			sock = INVALID_SOCKET;
+			throw Exception("LAN socket MTU configuration unavailable; standard-size IP fragmentation could not be enabled");
+		}
+	}
+#endif
 	int option = 1;
 	setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, (const char *)&option, sizeof(option));
 
 	sockaddr_in serveraddr{};
 	serveraddr.sin_family = AF_INET;
 	serveraddr.sin_port = htons(config::LocalPort);
+	serveraddr.sin_addr.s_addr = loopbackOnly ? htonl(INADDR_LOOPBACK) : INADDR_ANY;
 
 	if (::bind(sock, (sockaddr *)&serveraddr, sizeof(serveraddr)) < 0)
 	{
+		naomi_network_trace::event("bind_failed",sock,&serveraddr,-1,-1,0,-1,get_last_error());
 		ERROR_LOG(NETWORK, "NaomiServer: bind() failed. errno=%d", get_last_error());
 		closesocket(sock);
 
 		throw Exception("Socket bind failed");
 	}
+	naomi_network_trace::event("bound_udp",sock);
 	set_non_blocking(sock);
 
     // Allow broadcast packets to be sent
-    int broadcast = 1;
+    int broadcast = loopbackOnly ? 0 : 1;
     if (setsockopt(sock, SOL_SOCKET, SO_BROADCAST, (const char *)&broadcast, sizeof(broadcast)) == -1)
         WARN_LOG(NETWORK, "setsockopt(SO_BROADCAST) failed. errno=%d", get_last_error());
 }
@@ -102,6 +135,7 @@ bool NaomiNetwork::startNetwork()
 	slotId = 0;
 	slotCount = 0;
 	slaves.clear();
+	naomi_network_trace::event("handshake_start",sock,nullptr,-1,-1,0,config::ActAsServer?1:0,0,slotId,slotCount);
 
 	using namespace std::chrono;
 
@@ -149,6 +183,7 @@ bool NaomiNetwork::startNetwork()
 
 			os_notify(T("Starting game"), 2000);
 			setNaomiNetworkConfig(0, slotCount);
+			naomi_network_trace::event("handshake_complete",sock,&nextPeer,-1,-1,0,1,0,slotId,slotCount);
 
 			return true;
 		}
@@ -157,7 +192,7 @@ bool NaomiNetwork::startNetwork()
 	else
 	{
 		const auto timeout = seconds(30);
-		serverIp = INADDR_BROADCAST;
+		serverIp = loopbackOnly ? htonl(INADDR_LOOPBACK) : INADDR_BROADCAST;
 		u16 serverPort = SERVER_PORT;
 		if (!config::NetworkServer.get().empty())
 		{
@@ -170,6 +205,8 @@ bool NaomiNetwork::startNetwork()
 			}
 			else
 				server = config::NetworkServer;
+			if (loopbackOnly && server != "127.0.0.1")
+				throw Exception("Loopback cabinet requires server 127.0.0.1");
 			addrinfo *resultAddr;
 			if (getaddrinfo(server.c_str(), 0, nullptr, &resultAddr))
 				WARN_LOG(NETWORK, "Server %s is unknown", server.c_str());
@@ -206,9 +243,11 @@ bool NaomiNetwork::startNetwork()
 		if (!networkStopping && _startNow)
 		{
 			setNaomiNetworkConfig(slotId, slotCount, config::NaomiSatellite && satelliteSupported);
+			naomi_network_trace::event("handshake_complete",sock,&nextPeer,-1,-1,0,1,0,slotId,slotCount);
 			return true;
 		}
 	}
+	naomi_network_trace::event(networkStopping?"handshake_cancelled":"handshake_timeout",sock,nullptr,-1,-1,0,0,0,slotId,slotCount);
 	return false;
 }
 
@@ -270,6 +309,7 @@ bool NaomiNetwork::receive(const sockaddr_in *addr, const Packet *packet, u32 si
 			nextPeer.sin_family = AF_INET;
 			nextPeer.sin_port = packet->sync.nextNodePort;
 			nextPeer.sin_addr.s_addr = packet->sync.nextNodeIp == 0 ? addr->sin_addr.s_addr : packet->sync.nextNodeIp;
+			naomi_network_trace::event("slave_route_assigned",sock,&nextPeer,SyncReply,-1,(int)size,1,0,slotId,slotCount);
 			std::string notif = strprintf(T("Connected as slot %d"), slotId);
 			os_notify(notif.c_str(), 2000);
 		}
@@ -285,8 +325,10 @@ bool NaomiNetwork::receive(const sockaddr_in *addr, const Packet *packet, u32 si
 		break;
 
 	case Data:
-		if (!receivedData.empty())
+		if (!receivedData.empty()) {
+			naomi_network_trace::event("rx_overwrite_pending",sock,addr,Data,packet->data.packetNumber,(int)size,0,0,slotId,slotCount,(int)receivedData.size());
 			INFO_LOG(NETWORK, "Received packet overwritten");
+		}
 		receivedData.resize(size - packet->size(0));
 		memcpy(receivedData.data(), packet->data.payload, receivedData.size());
 		packetNumber = packet->data.packetNumber;
@@ -373,6 +415,7 @@ void setNaomiNetworkConfig(int node, int nodeCount, bool satellite)
 				v = 1;
 			break;
 		}
+		naomi_network_trace::event("voot_runtime_role",INVALID_SOCKET,nullptr,-1,-1,0,(int)v,0,node,nodeCount,(int)read_naomi_eeprom(0x45));
 		write_naomi_eeprom(0x45, v);
 	}
 	else if (gameId == "WAVE RUNNER GP")

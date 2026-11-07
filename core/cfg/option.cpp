@@ -169,6 +169,7 @@ Option<float> ProfilerFrameWarningTime("Profiler.FrameWarningTime", 1.0f / 55.0f
 // Network
 
 Option<bool> NetworkEnable("Enable", false, "network");
+Option<bool> NaomiLoopbackOnly("LoopbackOnly", false, "network");
 Option<bool> ActAsServer("ActAsServer", false, "network");
 Option<bool> NaomiSatellite("NaomiSatellite", false, "network");
 OptionString DNS("DNS", "dns.flyca.st", "network");

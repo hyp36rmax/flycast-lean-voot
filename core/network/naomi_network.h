@@ -19,6 +19,7 @@
 #pragma once
 #include "types.h"
 #include "net_platform.h"
+#include "naomi_network_trace.h"
 #include "miniupnp.h"
 #include "cfg/option.h"
 #include "emulator.h"
@@ -59,6 +60,7 @@ public:
 		emu.setNetworkState(false);
 		if (sock != INVALID_SOCKET)
 		{
+			naomi_network_trace::event("shutdown",sock,nullptr,-1,-1,0,0,0,slotId,slotCount);
 			closesocket(sock);
 			sock = INVALID_SOCKET;
 		}
@@ -70,6 +72,7 @@ public:
 		if (receivedData.empty())
 			return false;
 
+		if(receivedData.size()!=size)naomi_network_trace::event("guest_receive_size_mismatch",sock,nullptr,Data,this->packetNumber,(int)receivedData.size(),0,0,slotId,slotCount,(int)size);
 		size = std::min(size, (u32)receivedData.size());
 		memcpy(data, receivedData.data(), size);
 		receivedData.erase(receivedData.begin(), receivedData.begin() + size);
@@ -172,6 +175,7 @@ private:
 			if (rc == -1)
 			{
 				int error = get_last_error();
+				if(error!=L_EWOULDBLOCK&&error!=L_EAGAIN)naomi_network_trace::event("receive_socket_error",sock,nullptr,-1,-1,0,rc,error,slotId,slotCount);
 				if (error == L_EWOULDBLOCK || error == L_EAGAIN)
 					break;
 #ifdef _WIN32
@@ -181,6 +185,7 @@ private:
 #endif
 				throw Exception("Receive error: errno " + std::to_string(error));
 			}
+			naomi_network_trace::event("rx",sock,&addr,rc>=2?packet.type:-1,rc>=4&&packet.type==Data?packet.data.packetNumber:-1,rc,rc,0,slotId,slotCount);
 			if (rc < (int)packet.size(0))
 				throw Exception("Receive error: truncated packet");
 			receive(&addr, &packet, rc);
@@ -197,14 +202,19 @@ private:
 
 	void send(const sockaddr_in *addr, const Packet *packet, u32 size)
 	{
+		if (loopbackOnly && addr->sin_addr.s_addr != htonl(INADDR_LOOPBACK))
+			throw Exception("Loopback cabinet rejected an external destination");
 		int rc = sendto(sock, (const char *)packet, size, 0,
 				(sockaddr *)addr, sizeof(*addr));
+		const int error=rc!=(int)size?get_last_error():0;
+		naomi_network_trace::event("tx",sock,addr,packet->type,packet->type==Data?packet->data.packetNumber:-1,(int)size,rc,error,slotId,slotCount);
 		if (rc != (int)size)
-			throw Exception("Send failed: errno " + std::to_string(get_last_error()));
+			throw Exception("Send failed: errno " + std::to_string(error));
 		DEBUG_LOG(NETWORK, "Sent port %d pckt %d size %x", ntohs(addr->sin_port), packet->type, size - (u32)packet->size(0));
 	}
 
 	sock_t sock = INVALID_SOCKET;
+	bool loopbackOnly = false;
 	int slotCount = 0;
 	int slotId = 0;
 	std::atomic<bool> networkStopping{ false };

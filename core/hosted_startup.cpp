@@ -184,6 +184,8 @@ struct AspectControl {
     hosted_aspect::Packet *packet{};
     SDL_Window *window{};
     bool pending{}, rendered{}, restoring{};
+    std::atomic<bool> presentationCheckpoint{false};
+    int deferredSequence{};
     bool wide{}, super{}, clipping{};
     int x{}, y{}, width{}, height{};
     ~AspectControl() { if (packet) UnmapViewOfFile(packet); if (mapping) CloseHandle(mapping); }
@@ -206,12 +208,19 @@ void pollAspect(SDL_Window *window) {
     auto& a = aspectControl;
     if (!a.packet) return;
     auto& p = *a.packet;
+    const bool checkpoint=a.presentationCheckpoint.exchange(false, std::memory_order_acq_rel);
     const auto state = InterlockedCompareExchange(reinterpret_cast<volatile LONG*>(&p.state), 0, 0);
     if (!a.pending && state == hosted_aspect::Cancel) { aspectState(hosted_aspect::RolledBack); return; }
     if (a.pending && !a.restoring && (state == hosted_aspect::Cancel || GetTickCount64() >= p.deadline || !active || gui_is_open())) {
         restoreAspect(); note("aspect rollback awaiting native presentation"); return;
     }
     if (state != hosted_aspect::Requested) return;
+    if (!checkpoint) {
+        if (a.deferredSequence != p.sequence) { a.deferredSequence = p.sequence; note("aspect deferred until native renderer presentation checkpoint"); }
+        return;
+    }
+    // A leased transaction starts only after the renderer can present, not when the host queued it.
+    p.deadline = GetTickCount64() + 4000;
     if (InterlockedCompareExchange(reinterpret_cast<volatile LONG*>(&p.state), hosted_aspect::Applying, hosted_aspect::Requested) != hosted_aspect::Requested) return;
     p.error = 0;
     if (!window || !active || gui_is_open() || a.pending || !hosted_aspect::valid(p)
@@ -270,7 +279,10 @@ bool initialize() {
     aspectControl.mapping = OpenFileMappingA(FILE_MAP_ALL_ACCESS, FALSE, (prefix + "AspectV1").c_str());
     if (aspectControl.mapping) {
         aspectControl.packet = static_cast<hosted_aspect::Packet*>(MapViewOfFile(aspectControl.mapping, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(hosted_aspect::Packet)));
-        if (aspectControl.packet) InterlockedExchange(reinterpret_cast<volatile LONG*>(&aspectControl.packet->version), 1);
+        if (aspectControl.packet) {
+            InterlockedExchange(reinterpret_cast<volatile LONG*>(&aspectControl.packet->reserved), 2);
+            InterlockedExchange(reinterpret_cast<volatile LONG*>(&aspectControl.packet->version), 1);
+        }
     }
     auto open = [&](const char *name) { return OpenEventA(EVENT_MODIFY_STATE | SYNCHRONIZE, FALSE, (prefix + name).c_str()); };
     signals.created = open("Created"); signals.frame = open("GuestFrameSubmitted");
@@ -403,6 +415,7 @@ void aspect_rendered(int width, int height) {
 }
 void aspect_presented(int outputWidth, int outputHeight) {
     auto& a = aspectControl;
+    if (outputWidth > 0 && outputHeight > 0) a.presentationCheckpoint.store(true, std::memory_order_release);
     if (!a.pending || !a.rendered) return;
     if (outputWidth != (a.restoring ? a.width : a.packet->width)
             || outputHeight != (a.restoring ? a.height : a.packet->height)) return;

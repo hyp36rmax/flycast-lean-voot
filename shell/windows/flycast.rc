@@ -10,7 +10,11 @@
 
 // Icon with lowest ID value placed first to ensure application icon
 // remains consistent on all systems.
+#ifdef OT_LEAN_RUNTIME
+IDI_ICON1               ICON                    "projectot.ico"
+#else
 IDI_ICON1               ICON                    "flycast.ico"
+#endif
 
 /////////////////////////////////////////////////////////////////////////////
 
@@ -24,7 +28,7 @@ BEGIN
     BEGIN
 #ifdef OT_LEAN_RUNTIME
       VALUE "CompanyName", "Project OT contributors"
-      VALUE "FileDescription", "Project OT Lean Runtime"
+      VALUE "FileDescription", "Project OT Runtime (Flycast Lean)"
 #else
       VALUE "CompanyName", "Flycast Team"
       VALUE "FileDescription", "Flycast"
@@ -34,7 +38,7 @@ BEGIN
       VALUE "LegalCopyright", "Copyright various authors. Released under the GNU General Public License."
       VALUE "OriginalFilename", "flycast.exe"
 #ifdef OT_LEAN_RUNTIME
-      VALUE "ProductName", "Project OT Lean Runtime"
+      VALUE "ProductName", "Project OT Experience Runtime - Flycast Lean"
 #else
       VALUE "ProductName", "Flycast is a multiplatform Sega Dreamcast, Naomi and Atomiswave emulator"
 #endif
