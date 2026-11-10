@@ -19,6 +19,10 @@
 #pragma once
 #include "types.h"
 #include "net_platform.h"
+#if defined(_WIN32) && defined(FLYCAST_HOSTED_STARTUP)
+#include "ot_lan_transport.h"
+#include <memory>
+#endif
 #include "naomi_network_trace.h"
 #include "miniupnp.h"
 #include "cfg/option.h"
@@ -58,6 +62,12 @@ public:
 	{
 		enableNetworkBroadcast(false);
 		emu.setNetworkState(false);
+#if defined(_WIN32) && defined(FLYCAST_HOSTED_STARTUP)
+		if (std::getenv("PROJECTOT_LAN08_SESSION") != nullptr)
+			networkStopping = true;
+		if (auto link = std::atomic_exchange(&lan, std::shared_ptr<otlan::Transport>{}))
+			link->Stop();
+#endif
 		if (sock != INVALID_SOCKET)
 		{
 			naomi_network_trace::event("shutdown",sock,nullptr,-1,-1,0,0,0,slotId,slotCount);
@@ -84,6 +94,17 @@ public:
 #ifdef _WIN32
 	bool waitForData(std::chrono::microseconds timeout);
 #endif
+
+	void resetLanBoard()
+	{
+#if defined(_WIN32) && defined(FLYCAST_HOSTED_STARTUP)
+		if (auto link = std::atomic_load(&lan))
+		{
+			link->ResetBoard();
+			receivedData.clear();
+		}
+#endif
+	}
 
 	void send(u8 *data, u32 size, u16 packetNumber)
 	{
@@ -166,6 +187,29 @@ private:
 
 	void poll()
 	{
+#if defined(_WIN32) && defined(FLYCAST_HOSTED_STARTUP)
+		if (auto link = std::atomic_load(&lan))
+		{
+			if (link->Failed())
+				throw Exception("LAN receive worker stopped");
+			otlan::Bytes bytes;
+			for (size_t i = 0; i < otlan::QueueLimit && link->Pop(bytes); ++i)
+			{
+				Packet packet;
+				if (bytes.size() < sizeof(packet.type) || bytes.size() > sizeof(packet))
+					throw Exception("Invalid framed NAOMI packet size");
+				std::memcpy(&packet, bytes.data(), bytes.size());
+				if (bytes.size() < packet.size(0))
+					throw Exception("Truncated framed NAOMI packet");
+				naomi_network_trace::event("rx",INVALID_SOCKET,&link->Peer(),packet.type,
+					packet.type==Data?packet.data.packetNumber:-1,(int)bytes.size(),(int)bytes.size(),0,slotId,slotCount);
+				receive(&link->Peer(), &packet, static_cast<u32>(bytes.size()));
+			}
+			return;
+		}
+		if (networkStopping && std::getenv("PROJECTOT_LAN08_SESSION") != nullptr)
+			throw Exception("LAN transport was cancelled");
+#endif
 		Packet packet;
 		sockaddr_in addr;
 		while (true)
@@ -202,6 +246,18 @@ private:
 
 	void send(const sockaddr_in *addr, const Packet *packet, u32 size)
 	{
+#if defined(_WIN32) && defined(FLYCAST_HOSTED_STARTUP)
+		if (auto link = std::atomic_load(&lan))
+		{
+			try { link->Send(*addr, packet, size); }
+			catch (const std::exception& error) { throw Exception(error.what()); }
+			naomi_network_trace::event("tx",INVALID_SOCKET,addr,packet->type,
+				packet->type==Data?packet->data.packetNumber:-1,(int)size,(int)size,0,slotId,slotCount);
+			return;
+		}
+		if (networkStopping && std::getenv("PROJECTOT_LAN08_SESSION") != nullptr)
+			throw Exception("LAN transport was cancelled");
+#endif
 		if (loopbackOnly && addr->sin_addr.s_addr != htonl(INADDR_LOOPBACK))
 			throw Exception("Loopback cabinet rejected an external destination");
 		int rc = sendto(sock, (const char *)packet, size, 0,
@@ -213,6 +269,9 @@ private:
 		DEBUG_LOG(NETWORK, "Sent port %d pckt %d size %x", ntohs(addr->sin_port), packet->type, size - (u32)packet->size(0));
 	}
 
+#if defined(_WIN32) && defined(FLYCAST_HOSTED_STARTUP)
+	std::shared_ptr<otlan::Transport> lan;
+#endif
 	sock_t sock = INVALID_SOCKET;
 	bool loopbackOnly = false;
 	int slotCount = 0;

@@ -37,6 +37,15 @@ bool NaomiNetwork::waitForData(std::chrono::microseconds timeout)
 		return true;
 	if (timeout.count() <= 0)
 		return false;
+#if defined(FLYCAST_HOSTED_STARTUP)
+	if (auto link = std::atomic_load(&lan))
+	{
+		try { return link->Wait(timeout); }
+		catch (const std::exception& error) { throw Exception(error.what()); }
+	}
+	if (networkStopping && std::getenv("PROJECTOT_LAN08_SESSION") != nullptr)
+		return false;
+#endif
 	fd_set readable;
 	FD_ZERO(&readable);
 	FD_SET(sock, &readable);
@@ -60,6 +69,45 @@ bool NaomiNetwork::init()
 		miniupnp.AddPortMapping(config::LocalPort, true);
 	}
 
+#if defined(_WIN32) && defined(FLYCAST_HOSTED_STARTUP)
+	if (const char* session = std::getenv("PROJECTOT_LAN08_SESSION"))
+	{
+		const auto env = [](const char* name) {
+			const char* value = std::getenv(name);
+			return std::string(value != nullptr ? value : "");
+		};
+		try
+		{
+			const int port = config::ActAsServer ? 38901 : 38902;
+			if (loopbackOnly || settings.content.gameId != "VIRTUAL-ON ORATORIO TANGRAM" || config::LocalPort != port)
+				throw std::invalid_argument("LAN08 is only enabled for the hosted cross-PC VOOT cabinet");
+			if (networkStopping)
+				return false;
+			auto link = std::make_shared<otlan::Transport>(
+				otlan::endpoint(env("PROJECTOT_LAN08_LOCAL"), port),
+				otlan::endpoint(env("PROJECTOT_LAN08_PEER"), port == 38901 ? 38902 : 38901),
+				otlan::parseSession(session), env("PROJECTOT_LAN08_METRICS"), env("PROJECTOT_LAN08_FAILURE"));
+			std::atomic_store(&lan, link);
+			if (networkStopping)
+			{
+				std::atomic_store(&lan, std::shared_ptr<otlan::Transport>{});
+				link->Stop();
+				return false;
+			}
+			return true;
+		}
+		catch (const std::exception& error)
+		{
+			const auto failure = env("PROJECTOT_LAN08_FAILURE");
+			if (auto file = std::fopen(failure.c_str(), "wb"))
+			{
+				std::fputs(error.what(), file);
+				std::fclose(file);
+			}
+			throw Exception(error.what());
+		}
+	}
+#endif
 	createSocket();
 
 	return true;
@@ -222,6 +270,13 @@ bool NaomiNetwork::startNetwork()
 			}
 		}
 
+#if defined(_WIN32) && defined(FLYCAST_HOSTED_STARTUP)
+		if (auto link = std::atomic_load(&lan))
+		{
+			serverIp = link->Peer().sin_addr.s_addr;
+			serverPort = ntohs(link->Peer().sin_port);
+		}
+#endif
 		NOTICE_LOG(NETWORK, "Connecting to server");
 		os_notify(T("Connecting to server"), 10000);
 		steady_clock::time_point start_time = steady_clock::now();
@@ -316,6 +371,10 @@ bool NaomiNetwork::receive(const sockaddr_in *addr, const Packet *packet, u32 si
 		break;
 
 	case Start:
+#if defined(_WIN32) && defined(FLYCAST_HOSTED_STARTUP)
+		if (std::atomic_load(&lan) && (config::ActAsServer || slotId != 1 || packet->start.nodeCount != 2))
+			break;
+#endif
 		if (!_startNow)
 		{
 			slotCount = packet->start.nodeCount;

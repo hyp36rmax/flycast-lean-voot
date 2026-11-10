@@ -93,6 +93,8 @@ void NaomiM3Comm::closeNetwork()
 void NaomiM3Comm::connectNetwork()
 {
 	os_notify(i18n::T("Network started"), 5000);
+	if (slot_count >= 2)
+		naomiNetwork.resetLanBoard();
 	packet_number = 0;
 	slot_count = naomiNetwork.getSlotCount();
 	slot_id = naomiNetwork.getSlotId();
