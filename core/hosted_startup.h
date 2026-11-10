@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
+#include <string>
 
 namespace hosted_startup {
 #ifdef FLYCAST_HOSTED_STARTUP
@@ -9,6 +10,7 @@ bool muted();
 bool accepts_input();
 bool guest_paused();
 bool window_input_enabled();
+unsigned diagnostics_overlay(std::string& text);
 void window_created(void *window);
 void window_destroying(void *window);
 void frame_submitted();
@@ -24,6 +26,7 @@ inline bool muted() { return false; }
 inline bool accepts_input() { return true; }
 inline bool guest_paused() { return false; }
 inline bool window_input_enabled() { return false; }
+inline unsigned diagnostics_overlay(std::string&) { return 0; }
 inline void window_created(void *) {}
 inline void window_destroying(void *) {}
 inline void frame_submitted() {}

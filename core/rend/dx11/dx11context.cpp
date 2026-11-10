@@ -341,7 +341,8 @@ void DX11Context::EndImGuiFrame()
 	if (pDevice && pDeviceContext && renderTargetView)
 	{
 		if (overlayOnly) {
-			overlay.draw(settings.display.width, settings.display.height, config::FloatVMUs, true);
+			if (!hosted_startup::enabled())
+				overlay.draw(settings.display.width, settings.display.height, config::FloatVMUs, true);
 		}
 		else
 		{

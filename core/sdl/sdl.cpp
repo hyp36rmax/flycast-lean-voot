@@ -1000,7 +1000,11 @@ void sdl_window_create()
 	try {
 		initRenderApi();
 	} catch (const FlycastException& e) {
+#ifdef OT_LEAN_RUNTIME
+		SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Project OT Runtime Error", e.what(), window);
+#else
 		SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, i18n::T("Flycast Error"), e.what(), nullptr);
+#endif
 		throw;
 	}
 	// ImGui copy & paste

@@ -28,7 +28,7 @@ BEGIN
     BEGIN
 #ifdef OT_LEAN_RUNTIME
       VALUE "CompanyName", "Project OT contributors"
-      VALUE "FileDescription", "Project OT Runtime (Flycast Lean)"
+      VALUE "FileDescription", "Project OT Runtime"
 #else
       VALUE "CompanyName", "Flycast Team"
       VALUE "FileDescription", "Flycast"
@@ -38,7 +38,7 @@ BEGIN
       VALUE "LegalCopyright", "Copyright various authors. Released under the GNU General Public License."
       VALUE "OriginalFilename", "flycast.exe"
 #ifdef OT_LEAN_RUNTIME
-      VALUE "ProductName", "Project OT Experience Runtime - Flycast Lean"
+      VALUE "ProductName", "Project OT Runtime"
 #else
       VALUE "ProductName", "Flycast is a multiplatform Sega Dreamcast, Naomi and Atomiswave emulator"
 #endif

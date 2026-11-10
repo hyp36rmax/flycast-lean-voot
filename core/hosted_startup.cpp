@@ -50,6 +50,10 @@ std::atomic<int> pauseRequest{0};
 std::atomic<unsigned long long> pauseDeadline{0}, guestCycles{0};
 bool hostPaused = false;
 WNDPROC originalInputProcedure{};
+std::atomic<unsigned> overlayFlags{0};
+std::mutex overlayMutex;
+std::string overlayText;
+constexpr ULONG_PTR overlayTag = 0x4f544f10;
 constexpr UINT contactsMessage = WM_APP + 0x51, keyMessage = WM_APP + 0x52,
     focusMessage = WM_APP + 0x53;
 bool validInputOwner() {
@@ -127,6 +131,21 @@ void pollCabinetInput(){
 }
 bool aspectControlPending();
 LRESULT CALLBACK inputProcedure(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
+    if (message == WM_COPYDATA && lparam) {
+        const auto& packet = *reinterpret_cast<const COPYDATASTRUCT *>(lparam);
+        if ((packet.dwData & ~ULONG_PTR(3)) == overlayTag) {
+            if (reinterpret_cast<HWND>(wparam) != inputOwner || !validInputOwner() || !active
+                || !packet.lpData || packet.cbData < 1 || packet.cbData > 512)
+                return 0;
+            const auto *text = static_cast<const char *>(packet.lpData);
+            if (text[packet.cbData - 1] != 0 || std::memchr(text, 0, packet.cbData - 1))
+                return 0;
+            std::lock_guard<std::mutex> lock(overlayMutex);
+            overlayText.assign(text, packet.cbData - 1);
+            overlayFlags.store(packet.dwData & 3, std::memory_order_release);
+            return 1;
+        }
+    }
     if (message == WM_APP + 0x55 || message == WM_APP + 0x56 || message == WM_APP + 0x57) {
         if (reinterpret_cast<HWND>(wparam) != inputOwner || !validInputOwner()) return 0;
         if (message == WM_APP + 0x56) return static_cast<DWORD>(guestCycles.load());
@@ -319,7 +338,10 @@ void window_created(void *ownedWindow) {
             if (!originalInputProcedure || !SetPropA(inputWindow, "ProjectOT.WindowInput.v1", reinterpret_cast<HANDLE>(1))) {
                 if (originalInputProcedure) SetWindowLongPtr(inputWindow, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(originalInputProcedure));
                 inputWindow = nullptr; inputOwner = nullptr;
-            } else note("owned-window input protocol 1 ready");
+            } else {
+                SetPropA(inputWindow, "ProjectOT.DiagnosticsOverlay.v1", reinterpret_cast<HANDLE>(1));
+                note("owned-window input protocol 1 ready");
+            }
         }
     }
     SetEvent(signals.created); note("window created hidden; exact presentation HWND tagged");
@@ -327,6 +349,12 @@ void window_created(void *ownedWindow) {
 void window_destroying(void *ownedWindow) {
     if (!requested || !ownedWindow) return;
     if (inputWindow) {
+        RemovePropA(inputWindow, "ProjectOT.DiagnosticsOverlay.v1");
+        {
+            std::lock_guard<std::mutex> lock(overlayMutex);
+            overlayFlags.store(0, std::memory_order_release);
+            overlayText.clear();
+        }
         applyContacts(0); RemovePropA(inputWindow, "ProjectOT.WindowInput.v1");RemovePropA(inputWindow,"ProjectOT.InputMask.v1");
         SetWindowLongPtr(inputWindow, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(originalInputProcedure));
         inputWindow = nullptr; inputOwner = nullptr;inputOwnerPid=0; originalInputProcedure = nullptr;
@@ -334,6 +362,14 @@ void window_destroying(void *ownedWindow) {
     SDL_SysWMinfo info{}; SDL_VERSION(&info.version);
     if (SDL_GetWindowWMInfo(static_cast<SDL_Window *>(ownedWindow), &info))
         RemovePropA(info.info.win.window, windowProperty.c_str());
+}
+
+unsigned diagnostics_overlay(std::string& text) {
+    if (overlayFlags.load(std::memory_order_acquire) == 0 || !active)
+        return 0;
+    std::lock_guard<std::mutex> lock(overlayMutex);
+    text = overlayText;
+    return overlayFlags.load(std::memory_order_relaxed);
 }
 // Called at the original JVS command read, immediately before its existing mapping.
 unsigned cabinet_input(unsigned originalKcode){

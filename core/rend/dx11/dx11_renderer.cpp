@@ -612,6 +612,70 @@ void DX11Renderer::configVertexShader()
 	deviceContext->VSSetConstantBuffers(0, 1, &vtxConstants.get());
 }
 
+bool DX11Renderer::prepareVootDamageFlash(Vertex *vertices)
+{
+	vootDamageFlash = nullptr;
+	const int width = rendContext->framebufferWidth;
+	const int height = rendContext->framebufferHeight;
+	if (!vootWideClip || !config::Clipping || width * 3 <= height * 4)
+		return false;
+
+	const auto& matrix = matrices.GetViewportMatrix();
+	if (matrix[0][0] <= 0)
+		return false;
+
+	Rect clip;
+	constexpr u32 damageClip = 0x201a04c0;
+	if (matrices.getTileClip(damageClip, clip, vootWideClip) != TileClipping::Outside)
+		return false;
+	const float left = (clip.origin.x - matrix[3][0]) / matrix[0][0];
+	const float right = (clip.origin.x + clip.size.x - matrix[3][0]) / matrix[0][0];
+	if (left >= 0 && right <= 640)
+		return false;
+
+	const PolyParam *flash = nullptr;
+	for (const PolyParam& poly : rendContext->global_param_op)
+	{
+		if (poly.pcw.full != 0xa08e0001 || poly.tileclip != damageClip
+				|| poly.isp.full != 0x80400000 || poly.tsp.full != 0x20880440
+				|| poly.tcw.full != 0 || poly.count != 4
+				|| poly.first > rendContext->idx.size() || rendContext->idx.size() - poly.first < 4)
+			continue;
+
+		Vertex strip[4];
+		bool matches = true;
+		for (int i = 0; i < 4; ++i)
+		{
+			const u32 index = rendContext->idx[poly.first + i];
+			if (index >= rendContext->verts.size())
+			{
+				matches = false;
+				break;
+			}
+			const Vertex& v = rendContext->verts[index];
+			if (v.x != (i < 2 ? 639.f : 0.f) || v.y != ((i & 1) ? 479.f : 0.f) || v.z != 2.5f
+					|| v.col[0] != 0 || v.col[1] != 0 || v.col[2] != 192 || v.col[3] != 255)
+			{
+				matches = false;
+				break;
+			}
+			strip[i] = v;
+			strip[i].x = i < 2 ? right : left;
+		}
+		if (!matches)
+			continue;
+		if (flash != nullptr)
+			return false;
+		flash = &poly;
+		memcpy(vertices, strip, sizeof(strip));
+	}
+
+	// Only the replacement strip's X coordinates change. Its original draw
+	// still owns the tile clip, depth and blend state.
+	vootDamageFlash = flash;
+	return flash != nullptr;
+}
+
 void DX11Renderer::uploadGeometryBuffers()
 {
 #ifdef FLYCAST_VOOT_RENDER_DIAGNOSTICS
@@ -660,6 +724,11 @@ void DX11Renderer::uploadGeometryBuffers()
 #endif
 	const size_t originalSize = rendContext->verts.size() * sizeof(decltype(*rendContext->verts.data()));
 	size_t size = originalSize + (vootTitleBackground ? sizeof(titleSides) : 0);
+	Vertex damageVertices[4];
+	const bool damage = prepareVootDamageFlash(damageVertices);
+	vootDamageFirstVertex = size / sizeof(Vertex);
+	if (damage)
+		size += sizeof(damageVertices);
 	bool rc = ensureBufferSize(vertexBuffer, D3D11_BIND_VERTEX_BUFFER, vertexBufferSize, size);
 	verify(rc);
 	D3D11_MAPPED_SUBRESOURCE mappedSubres;
@@ -667,6 +736,8 @@ void DX11Renderer::uploadGeometryBuffers()
 	memcpy(mappedSubres.pData, rendContext->verts.data(), originalSize);
 	if (vootTitleBackground)
 		memcpy(static_cast<u8*>(mappedSubres.pData) + originalSize, titleSides, sizeof(titleSides));
+	if (damage)
+		memcpy(static_cast<Vertex*>(mappedSubres.pData) + vootDamageFirstVertex, damageVertices, sizeof(damageVertices));
 	if (vootWideClip && rendContext->verts.size() >= 4 && !rendContext->global_param_op.empty())
 	{
 		const auto& background = rendContext->global_param_op.front();
@@ -1121,7 +1192,10 @@ void DX11Renderer::drawList(const std::vector<PolyParam>& gply, int first, int c
 			}
 			setRenderState<Type, SortingEnabled>(params);
 			drawVootTitleSides(params, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
-			deviceContext->DrawIndexed(params->count, params->first, 0);
+			if (Type == ListType_Opaque && params == vootDamageFlash)
+				deviceContext->Draw(4, vootDamageFirstVertex);
+			else
+				deviceContext->DrawIndexed(params->count, params->first, 0);
 #ifdef FLYCAST_VOOT_RENDER_DIAGNOSTICS
 			if (vootDrawTrace.is_open())
 				vootDrawTrace << Type << ',' << params->first << ',' << params->count << ',' << params->isp.CullMode << ',' << params->isp.DepthMode << ',' << params->tileclip << '\n';

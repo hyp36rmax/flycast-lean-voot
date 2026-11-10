@@ -92,6 +92,9 @@ protected:
 	void createTexAndRenderTarget(ComPtr<ID3D11Texture2D>& texture, ComPtr<ID3D11RenderTargetView>& renderTarget, int width, int height);
 	void configVertexShader();
 	void uploadGeometryBuffers();
+	bool prepareVootDamageFlash(Vertex *vertices);
+	const PolyParam *vootDamageFlash = nullptr;
+	u32 vootDamageFirstVertex = 0;
 	void drawVootTitleSides(const PolyParam* params, D3D11_PRIMITIVE_TOPOLOGY resumeTopology);
 	const PolyParam* vootTitleBackground = nullptr;
 	u32 vootTitleFirstVertex = 0;

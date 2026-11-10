@@ -393,7 +393,11 @@ int main(int argc, char* argv[])
 	} catch (const std::exception& e) {
 		ERROR_LOG(BOOT, "mainui_loop error: %s", e.what());
 #ifndef TARGET_UWP
+#ifdef OT_LEAN_RUNTIME
+		MessageBox(GetActiveWindow(), "Project OT Runtime Error", e.what(), MB_ICONSTOP | MB_OK);
+#else
 		MessageBox(NULL, i18n::T("Flycast Error"), e.what(), MB_ICONSTOP | MB_OK);
+#endif
 #endif
 	} catch (...) {
 		ERROR_LOG(BOOT, "mainui_loop unknown exception");

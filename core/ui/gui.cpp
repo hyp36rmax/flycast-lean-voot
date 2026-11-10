@@ -1519,8 +1519,57 @@ void gui_draw_osd()
 	uiThreadRunner.execTasks();
 }
 
+static void drawHostedDiagnostics()
+{
+	std::string text;
+	const unsigned flags = hosted_startup::diagnostics_overlay(text);
+	static u64 sampledAt = 0;
+	static u32 sampledFrames = 0;
+	static float renderFps = -1;
+	if (!(flags & 2))
+	{
+		sampledAt = 0;
+		renderFps = -1;
+	}
+	if (flags == 0 || !imguiDriver)
+		return;
+	if (flags & 2)
+	{
+		const u64 now = getTimeMs();
+		if (sampledAt == 0 || now - sampledAt >= 1000)
+		{
+			if (sampledAt != 0)
+				renderFps = (MainFrameCount - sampledFrames) * 1000.f / (now - sampledAt);
+			sampledAt = now;
+			sampledFrames = MainFrameCount;
+		}
+		char value[64];
+		if (renderFps < 0)
+			snprintf(value, sizeof(value), "\nFPS: sampling");
+		else
+			snprintf(value, sizeof(value), "\nFPS: %.1f", renderFps);
+		text += value;
+	}
+	// Use only the draw list. The hosted surface has no ImGui widgets or input.
+	imguiDriver->newFrame();
+	auto& io = ImGui::GetIO();
+	io.DisplaySize = ImVec2(settings.display.width, settings.display.height);
+	ImGui::NewFrame();
+	const float size = std::min(uiScaled(17.f), io.DisplaySize.y / 20.f);
+	const float width = std::max(1.f, io.DisplaySize.x - 32.f);
+	const ImVec2 pos(16.f, 16.f);
+	auto *font = ImGui::GetFont();
+	const ImVec2 extent = font->CalcTextSizeA(size, width, width, text.c_str());
+	auto *draw = ImGui::GetForegroundDrawList();
+	draw->AddRectFilled(ImVec2(8.f, 8.f), ImVec2(pos.x + extent.x + 8.f, pos.y + extent.y + 8.f),
+		IM_COL32(8, 12, 20, 235), 4.f);
+	draw->AddText(font, size, pos, IM_COL32(240, 244, 250, 255), text.c_str(), nullptr, width);
+	ImGui::Render();
+	imguiDriver->renderDrawData(ImGui::GetDrawData(), false);
+}
+
 void gui_display_osd() {
-	if (hosted_startup::enabled()) { uiThreadRunner.execTasks(); return; }
+	if (hosted_startup::enabled()) { drawHostedDiagnostics(); uiThreadRunner.execTasks(); return; }
 	gui_draw_osd();
 	gui_endFrame(gui_is_open());
 }
