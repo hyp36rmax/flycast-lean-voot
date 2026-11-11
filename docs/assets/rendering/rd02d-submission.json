@@ -1,0 +1,72 @@
+{
+  "scope": "Historical RD02D matched Solo replay, sample 2; x64/DX11 diagnostic evidence. Not a current-source benchmark or full gameplay qualification.",
+  "renderTarget": [
+    3840,
+    1080
+  ],
+  "sourceIdentity": "Isolated RD02D snapshot, not a Git commit; pinned upstream 5aa091fde632fb332c8d8c34e280d62dc951954c.",
+  "counts": {
+    "before": {
+      "materials": {
+        "0x32151700": 0,
+        "0x32159700": 0,
+        "0x3205a800": 0
+      },
+      "raw_aligned_tcw_words": {
+        "0x32151700": 0,
+        "0x32159700": 0,
+        "0x3205a800": 0
+      },
+      "vertices": 0,
+      "bounds": null
+    },
+    "after": {
+      "materials": {
+        "0x32151700": 348,
+        "0x32159700": 201,
+        "0x3205a800": 27
+      },
+      "raw_aligned_tcw_words": {
+        "0x32151700": 16,
+        "0x32159700": 28,
+        "0x3205a800": 10
+      },
+      "vertices": 2153,
+      "bounds": [
+        [
+          -575.881165,
+          -460.703003
+        ],
+        [
+          127.857254,
+          188.391296
+        ],
+        [
+          0.00300699775,
+          0.00321857538
+        ]
+      ]
+    }
+  },
+  "totalPolygons": {
+    "before": 1687,
+    "after": 2411
+  },
+  "recordSHA256": {
+    "RD02D-report.txt": "58477343da15e3ed793d48a33d81ae98e90906e31d9880de133406ee3d89874b",
+    "far-mesh-comparison.json": "03110c4ac5414cd68cf1d6c17db1a395747d09d41b16025b7854029e7d568d91",
+    "geometry-comparison.json": "116bdf5b12724339ddee23605777063f864413032b7960a46c20e538923581da",
+    "source-manifest.json": "9f9c43be4df475820c4f562fe13fbfd44e9e4fb339ac8cc8e1f995109475ff3d",
+    "compare_far_mesh.py": "dd4c15e8512e88ff8ce92fa20e306a8bed791d75dd0879370be252ac0b4784fd"
+  },
+  "polygonCSVSHA256": {
+    "before-geometry": "a86fed038dd0f11609194d11f780d75a7017248988c822341d6b1b40e0dece95",
+    "after-geometry": "72a4efb5732bd190ee141061bbd760c4e9ba5ca6081bb2ed9099180437cdb490"
+  },
+  "limits": [
+    "Material groups are local mesh evidence, not formal guest object IDs.",
+    "Capture-specific trace executable mapping is not independently established by the final Release identity.",
+    "Original evidence remains in the maintainer archive; only aggregate counts are included here.",
+    "Gameplay image publication rights are not approved."
+  ]
+}

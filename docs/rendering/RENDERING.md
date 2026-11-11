@@ -22,6 +22,8 @@ A wider projection could still meet a tile clip based on the original horizontal
 
 Original-aspect behavior is covered by the matrix fixture family. The differential corpus compares the clipping implementation with its retained reference calculation. [Regression corpus](../../tests/src/VootWidescreenClipTest.cpp#L353)
 
+![Hor+ projection and eligible clip expansion at exact 4:3, 16:9 and 32:9 ratios, preserving vertical framing](../assets/rendering/horplus-clipping.svg)
+
 ## VOOT horizontal visibility
 
 Three points in the geometry path needed separate investigation.
@@ -36,6 +38,10 @@ An extra horizontal extent is published from the eligible VOOT world viewport. I
 
 Inside Flycast's existing dynamic SH-4 compiler, the correction recognizes two identified bound loads. It checks the title, load width, destination register and six-instruction signature before adjusting the generated load result by that extent. The specialization is limited to the matched code. This happens as part of emulated execution; the original ROM and BIOS files and guest instruction bytes are preserved. [Guarded specialization](../../core/rec-x64/rec_x64.cpp#L262)
 
+![Historical matched replay sample: three material groups changed from zero to 576 submitted polygon records](../assets/rendering/visibility-submission.svg)
+
+This R&D-02D figure summarizes the retained matched Solo replay at 3840×1080, sample 2, in the x64/DX11 diagnostic investigation. The three material groups contribute 348 + 201 + 27 polygon records. The whole sample changes from 1,687 to 2,411 polygons, including other returning geometry. These are local mesh identifiers, not formal guest object IDs. [Record identities and scope](../assets/VISUAL-EVIDENCE.md#vis-03-submission-evidence)
+
 ## Aspect and HUD qualification
 
 The retained R&D-02D record reports restored submitted geometry and short physical checks at original 4:3, 16:9 and ultrawide aspects. Wider stage, character and camera-angle coverage remains pending. The consolidated revision has its own scoped [automated and startup validation](../ENGINEERING.md#validation-scope).
@@ -44,4 +50,4 @@ World expansion and HUD placement need separate review. The targeted visibility 
 
 ## Maintainer figure review
 
-The [asset checklist](../assets/ASSET-CHECKLIST.md) plans matched captures and projection/visibility figures. Scene selection, captions and rights review precede final publication assets.
+The [asset checklist](../assets/ASSET-CHECKLIST.md) plans matched captures and projection/visibility figures. The technical figures are available for maintainer review. Gameplay scene selection, capture provenance and image rights remain pending. [Figure evidence](../assets/VISUAL-EVIDENCE.md)

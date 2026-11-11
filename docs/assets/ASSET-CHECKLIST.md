@@ -25,3 +25,9 @@ The [rendering notes](../rendering/RENDERING.md) give source anchors for project
 - [ ] Keep chart units, workload, sample counts and counterexamples visible.
 - [ ] Check diagrams against runtime interfaces and source guards.
 - [ ] Approve final files and alt text before adding them to the repository.
+
+## FLV-DOC02 production status
+
+Six SVG technical figures are generated and integrated on the visuals branch: VIS-02, the numeric submission figure for VIS-03, and VIS-04 through VIS-07. Their narrow source/evidence claims are verified; maintainer approval is still required before merge. [Evidence, classifications and remaining work](VISUAL-EVIDENCE.md)
+
+VIS-01 and the gameplay-image portion of VIS-03 await scene/provenance and rights review. VIS-08 remains blocked by missing linked hardware-image evidence. The unchecked approval list above remains a maintainer checklist, not a claim that the generated figures were merged or released.

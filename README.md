@@ -76,11 +76,21 @@ Getting the original game running gave us a baseline. The work that followed foc
 | SH-4 execution | Direct MMU-off block lookup with the existing MMU-enabled fallback | [Execution study](docs/performance/PERFORMANCE.md#sh-4-block-dispatch) |
 | Cabinet communication | Windows readiness waiting and separate Solo/Local and LAN configurations | [Runtime profiles](docs/ENGINEERING.md#runtime-profiles) |
 
+![Public runtime architecture separating original Flycast emulation, Lean modifications and external host responsibilities](docs/assets/architecture/runtime-interfaces.svg)
+
+The rendering path separates guest geometry submission from host projection and clipping:
+
+![Exact-ratio 4:3, 16:9 and 32:9 Hor+ framing with preserved vertical limits and separate guest visibility correction](docs/assets/rendering/horplus-clipping.svg)
+
 ## Performance and Validation
 
 Focused measurements helped us decide which changes were worth keeping. Their workloads, sample counts and counterexamples are recorded in the [performance notes](docs/performance/PERFORMANCE.md). Those studies measure particular host costs; the consolidated source still needs its own performance characterization.
 
 Both Windows x64 Release profiles built from a clean source checkout. Focused rendering, host, transport and actual runtime startup/shutdown checks passed at source checkpoint `e8d678072a10`. Full physical gameplay and sustained cross-PC LAN qualification remain open for that revision. [Validation scope](docs/ENGINEERING.md#validation-scope)
+
+![Historical R&D-03D TA parser mean and P99 wall times with workload and sample counts](docs/assets/performance/rd03d-parser.svg)
+
+The [SH-4 figure](docs/assets/performance/rd03e-dispatch.svg) includes the render-start P99 regression; the [NAOMI waiting figure](docs/assets/performance/rd04a-link-wait.svg) includes both cabinet roles. [Figure evidence and limits](docs/assets/VISUAL-EVIDENCE.md) distinguish historical measurements from current-source validation.
 
 ## Building Flycast Lean VOOT
 

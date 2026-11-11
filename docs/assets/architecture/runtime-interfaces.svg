@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="1180" viewBox="0 0 720 1180" role="img" aria-labelledby="title desc">
+<title id="title">Flycast Lean VOOT runtime boundary</title><desc id="desc">Original Flycast emulation is retained. Lean source modifications and public hosted interfaces are distinguished from external application ownership.</desc>
+<style>text{font-family:Arial,Helvetica,sans-serif;fill:#172b3a} .minor{fill:#425466} .before{fill:#425466} .after{fill:#176e56} .warning{fill:#a5411e}</style>
+<rect width="720" height="1180" rx="8" fill="#fff" stroke="#c8d1d9"/>
+<text x="30" y="42" font-size="27" style="fill:#172b3a" font-weight="600" text-anchor="start">Flycast Lean VOOT runtime boundary</text>
+<text x="30" y="79" font-size="20" style="fill:#172b3a" font-weight="400" text-anchor="start">Public runtime contract; no external application internals.</text>
+<text x="30" y="107" font-size="20" style="fill:#172b3a" font-weight="400" text-anchor="start">Scope: consolidated C++ source, Windows x64 / DX11.</text>
+<rect x="30" y="132" width="660" height="73" rx="4" fill="#f4f7f9" stroke="#425466" stroke-width="2"/>
+<text x="48" y="161" font-size="23" style="fill:#172b3a" font-weight="600" text-anchor="start">Original NAOMI 5.66 software</text>
+<text x="48" y="188" font-size="19" style="fill:#172b3a" font-weight="400" text-anchor="start">User-supplied game and BIOS; not included in this repository.</text>
+<path d="M360,207 L360,232" stroke="#425466" stroke-width="2" fill="none"/>
+<polyline points="355,224 360,232 365,224" stroke="#425466" stroke-width="2" fill="none"/>
+<rect x="30" y="236" width="660" height="330" rx="4" fill="#f4f7f9" stroke="#425466" stroke-width="2"/>
+<text x="48" y="269" font-size="21" style="fill:#172b3a" font-weight="600" text-anchor="start">Original Flycast foundation  •  retained functionality</text>
+<text x="48" y="308" font-size="21" style="fill:#172b3a" font-weight="400" text-anchor="start">SH-4 execution  →  guest commands and device activity</text>
+<rect x="48" y="331" width="297" height="66" rx="4" fill="#fff" stroke="#425466" stroke-width="2"/>
+<rect x="365" y="331" width="307" height="66" rx="4" fill="#fff" stroke="#425466" stroke-width="2"/>
+<text x="64" y="371" font-size="21" style="fill:#172b3a" font-weight="400" text-anchor="start">PowerVR rendering</text>
+<text x="381" y="371" font-size="21" style="fill:#172b3a" font-weight="400" text-anchor="start">AICA audio</text>
+<rect x="48" y="417" width="297" height="66" rx="4" fill="#fff" stroke="#425466" stroke-width="2"/>
+<rect x="365" y="417" width="307" height="66" rx="4" fill="#fff" stroke="#425466" stroke-width="2"/>
+<text x="64" y="457" font-size="21" style="fill:#172b3a" font-weight="400" text-anchor="start">JVS input</text>
+<text x="381" y="457" font-size="21" style="fill:#172b3a" font-weight="400" text-anchor="start">NAOMI cabinet comms</text>
+<text x="48" y="530" font-size="20" style="fill:#172b3a" font-weight="400" text-anchor="start">Native executable owns emulation, rendering and audio.</text>
+<rect x="30" y="597" width="660" height="155" rx="4" fill="#e8f3f7" stroke="#17698a" stroke-width="2"/>
+<text x="48" y="629" font-size="22" style="fill:#172b3a" font-weight="600" text-anchor="start">Flycast Lean VOOT  •  source modifications</text>
+<text x="48" y="661" font-size="20" style="fill:#172b3a" font-weight="400" text-anchor="start">Guarded Hor+ / visibility; DX11 / parser; SH-4 dispatch.</text>
+<text x="48" y="690" font-size="20" style="fill:#172b3a" font-weight="400" text-anchor="start">Cabinet readiness wait; distinct opt-in LAN transport.</text>
+<text x="48" y="719" font-size="20" style="fill:#172b3a" font-weight="400" text-anchor="start">Lean source selection and hosted runtime interfaces.</text>
+<rect x="30" y="783" width="660" height="105" rx="4" fill="#e8f3f7" stroke="#17698a" stroke-width="2"/>
+<text x="48" y="815" font-size="21" style="fill:#172b3a" font-weight="600" text-anchor="start">Hosted interfaces  •  explicit integration boundary</text>
+<text x="48" y="847" font-size="19" style="fill:#172b3a" font-weight="400" text-anchor="start">Config/data directories; lifecycle events; versioned input.</text>
+<text x="48" y="874" font-size="19" style="fill:#172b3a" font-weight="400" text-anchor="start">Aspect V1: Solo preview/commit. LAN: endpoint contract.</text>
+<path d="M360,890 L360,915" stroke="#425466" stroke-width="2" fill="none"/>
+<polyline points="355,907 360,915 365,907" stroke="#425466" stroke-width="2" fill="none"/>
+<polyline points="355,898 360,890 365,898" stroke="#425466" stroke-width="2" fill="none"/>
+<rect x="30" y="919" width="660" height="84" rx="4" fill="#fff" stroke="#425466" stroke-width="2" stroke-dasharray="7 5"/>
+<text x="48" y="951" font-size="22" style="fill:#172b3a" font-weight="600" text-anchor="start">External application responsibilities</text>
+<text x="48" y="981" font-size="20" style="fill:#172b3a" font-weight="400" text-anchor="start">Configure paths, route input and own session processes.</text>
+<text x="30" y="1045" font-size="20" style="fill:#172b3a" font-weight="400" text-anchor="start">Source-verified profiles  •  FLYCAST_OT_LAN_TRANSPORT</text>
+<text x="30" y="1076" font-size="20" style="fill:#172b3a" font-weight="400" text-anchor="start">OFF: Solo (one process); Local VS (MASTER + SLAVE).</text>
+<text x="30" y="1107" font-size="20" style="fill:#172b3a" font-weight="400" text-anchor="start">ON: LAN transport; hosted startup is required.</text>
+<text x="30" y="1138" font-size="20" style="fill:#172b3a" font-weight="400" text-anchor="start">Diagram groups responsibilities; arrows are not a timing trace.</text>
+</svg>

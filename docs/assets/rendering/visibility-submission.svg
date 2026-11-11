@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="720" viewBox="0 0 720 720" role="img" aria-labelledby="title desc">
+<title id="title">Geometry returned to submission</title><desc id="desc">Historical R&amp;D-02D matched Solo replay: material groups total zero before and 576 submitted polygons after the visibility correction.</desc>
+<style>text{font-family:Arial,Helvetica,sans-serif;fill:#172b3a} .minor{fill:#425466} .before{fill:#425466} .after{fill:#176e56} .warning{fill:#a5411e}</style>
+<rect width="720" height="720" rx="8" fill="#fff" stroke="#c8d1d9"/>
+<text x="30" y="42" font-size="27" style="fill:#172b3a" font-weight="600" text-anchor="start">Geometry returned to submission</text>
+<text x="30" y="80" font-size="20" style="fill:#172b3a" font-weight="400" text-anchor="start">R&amp;D-02D  •  matched saved Solo replay  •  sample 2</text>
+<text x="30" y="108" font-size="20" style="fill:#172b3a" font-weight="400" text-anchor="start">DX11 / x64 diagnostics; 3840 × 1080 rendering.</text>
+<text x="30" y="163" font-size="20" style="fill:#172b3a" font-weight="600" text-anchor="start">Submitted polygon records in three far-mesh material groups</text>
+<text x="30" y="208" font-size="21" style="fill:#172b3a" font-weight="400" text-anchor="start">Before correction</text>
+<text x="680" y="208" font-size="25" style="fill:#172b3a" font-weight="600" text-anchor="end">0</text>
+<rect x="30" y="226" width="660" height="12" rx="0" fill="#f1f4f6" stroke="#f1f4f6" stroke-width="2"/>
+<text x="30" y="278" font-size="21" style="fill:#172b3a" font-weight="400" text-anchor="start">After correction</text>
+<text x="680" y="278" font-size="25" style="fill:#176e56" font-weight="600" text-anchor="end">576</text>
+<rect x="30" y="296" width="382.8" height="36" rx="0" fill="#17698a" stroke="#17698a" stroke-width="2"/>
+<rect x="412.8" y="296" width="221.1" height="36" rx="0" fill="#176e56" stroke="#176e56" stroke-width="2"/>
+<rect x="633.9" y="296" width="29.7" height="36" rx="0" fill="#85621b" stroke="#85621b" stroke-width="2"/>
+<rect x="30" y="359" width="14" height="14" rx="0" fill="#17698a" stroke="#17698a" stroke-width="2"/>
+<text x="56" y="374" font-size="20" style="fill:#172b3a" font-weight="400" text-anchor="start">0x32151700   0 → 348 polygon records</text>
+<rect x="30" y="396" width="14" height="14" rx="0" fill="#176e56" stroke="#176e56" stroke-width="2"/>
+<text x="56" y="411" font-size="20" style="fill:#172b3a" font-weight="400" text-anchor="start">0x32159700   0 → 201 polygon records</text>
+<rect x="30" y="433" width="14" height="14" rx="0" fill="#85621b" stroke="#85621b" stroke-width="2"/>
+<text x="56" y="448" font-size="20" style="fill:#172b3a" font-weight="400" text-anchor="start">0x3205a800   0 → 27 polygon records</text>
+<path d="M30,336 L690,336" stroke="#91a0ad" stroke-width="2" fill="none"/>
+<text x="30.0" y="358" font-size="17" style="fill:#172b3a" font-weight="400" text-anchor="middle">0</text>
+<text x="250.0" y="358" font-size="17" style="fill:#172b3a" font-weight="400" text-anchor="middle">200</text>
+<text x="470.0" y="358" font-size="17" style="fill:#172b3a" font-weight="400" text-anchor="middle">400</text>
+<text x="690.0" y="358" font-size="17" style="fill:#172b3a" font-weight="400" text-anchor="middle">600</text>
+<text x="30" y="506" font-size="20" style="fill:#172b3a" font-weight="400" text-anchor="start">Linear scale starts at zero; upper bound 600 polygon records.</text>
+<text x="30" y="538" font-size="20" style="fill:#172b3a" font-weight="400" text-anchor="start">Whole sample: 1,687 → 2,411 polygons; these groups add 576.</text>
+<text x="30" y="570" font-size="20" style="fill:#172b3a" font-weight="400" text-anchor="start">The first two raw TA samples were byte-identical.</text>
+<text x="30" y="602" font-size="20" style="fill:#172b3a" font-weight="400" text-anchor="start">Groups identify local mesh evidence, not formal object IDs.</text>
+<text x="30" y="634" font-size="20" style="fill:#172b3a" font-weight="400" text-anchor="start">This is submission evidence, not an FPS or latency result.</text>
+<text x="30" y="666" font-size="20" style="fill:#172b3a" font-weight="400" text-anchor="start">Matched gameplay comparison: pending provenance and rights.</text>
+</svg>
