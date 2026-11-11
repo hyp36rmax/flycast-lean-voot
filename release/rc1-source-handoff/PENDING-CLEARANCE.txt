@@ -1,0 +1,23 @@
+Project OT v0.5.0-rc.1 — private corresponding-source reference
+This branch preserves the existing consolidated runtime source/history. It does
+not substitute that tree for the two frozen executables' individual source.
+Solo/Local: d275fdabcad18ba3d236dcbcdb40885ceefaa0a7
+LAN: 1a00ec4723a1438857cf4df1797b8844c983fcb8
+Both source commits remain in preserved repository history. The accompanying
+manifest maps them to exact frozen executable and archive identities.
+The original9-file offline handoff is verified locally. The3 referenced source
+ZIPs are NOT committed here; the dependency ZIP exceeds the normal GitHub file
+limit. No LFS pointer or inaccessible private branch is claimed to be recipient
+delivery. Obtain the actual approved co-delivery files before using Restore-Source.py.
+The source repository remains private; publication/access is not yet qualified.
+The two original source trees use their documented separate build recipe, not
+the later consolidated FLYCAST_OT_LAN_TRANSPORT selector.
+CDI's recovered GPLv2 grant versus compiled xBRZ GPLv3 remains unresolved. MD5 MIT
+attribution is recovered. Generated font/resource rights, exact notice/source/
+install obligations and Experience integration scope still need clearance.
+The prepared notices here are review material, not a legal release approval.
+Existing README/engineering/history/performance wording is preserved. The full
+approved November6 V1.0 export remains pending where previously unavailable;
+no historical narrative or measurement has been invented or reconstructed.
+No game/BIOS, frozen executable, private Experience implementation or new
+research-only optimization is included by this checkpoint.

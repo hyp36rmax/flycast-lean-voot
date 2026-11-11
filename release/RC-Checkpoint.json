@@ -1,0 +1,37 @@
+{
+  "version": "v0.5.0-rc.1",
+  "sourceGitLineage": "047feee3ffaf1437f3fc07a0e64e6eb2732d1827",
+  "sourceDirtyInQualifiedBuild": true,
+  "qualifiedSourceManifestSHA256": "ECD3BE7F328C079463B9AC71F91DD79C03657B40149ECF128677706359940D31",
+  "applicationSHA256": "B47C4CC876C3795A269D4AFC457598C832AC38D332FA24CF4733077D97839B85",
+  "managedHostSHA256": "184C3CFB32FC2A264E73E22EF74C545D2716F4CCC9E445DDE4FC17C116DA2AE7",
+  "runtimeHashes": {
+    "Solo-Local": "B542A02195031A98C7F6B0108D09CA5F07B09D716C234A265E9D704650F50B5D",
+    "LAN": "B75509A793E31E0EB58AC9870C08E1635281A1A16EE0A78FE2C7FF983D8D6811"
+  },
+  "privateValidationZip": "ProjectOT_v0.5.0-rc.1_Win64_PRIVATE_UAT.zip",
+  "privateValidationZipSHA256": "6B0779C70258E88BF0078E13F84AB6D4A97966F78B91738CFE0BEDBCC4F03484",
+  "qualification": {
+    "priorDAY01Groups": 25,
+    "priorDAY01Checks": 1189,
+    "DAY05AFocusedGroups": 11,
+    "DAY05AFocusedChecks": 466,
+    "nativeCaptureComparisons": 68,
+    "cabinetLaunchDefinitions": 28
+  },
+  "build": {
+    "configuration": "Release",
+    "rid": "win-x64",
+    "sdk": "10.0.401",
+    "framework": "Microsoft.NETCore.App 10.0",
+    "distributionProfile": "RC",
+    "SelfContained": false,
+    "PublishSingleFile": false,
+    "PublishTrimmed": false,
+    "runtimeRebuild": false
+  },
+  "licensing": "BLOCKED / RELEASE-DAY05B; private checkpoint is not redistribution clearance",
+  "correspondingSource": "Known variant/source handoffs verified locally; recipient download not yet published/tested; legal scope pending",
+  "physicalUat": "DEFERRED by user; not a newly observed PASS",
+  "publicDistribution": "NO-GO; no release/tag/visibility change authorized"
+}

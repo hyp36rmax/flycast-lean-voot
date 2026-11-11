@@ -1,0 +1,23 @@
+{
+  "variants": {
+    "Solo-Local": {
+      "commit": "d275fdabcad18ba3d236dcbcdb40885ceefaa0a7",
+      "archive": "Solo-Local-d275fdabcad1.zip",
+      "sha256": "E02178750C97CB4C08B1B928014F9113D18601B1019A4339F775C2011859C05A",
+      "frozenExecutableSha256": "B542A02195031A98C7F6B0108D09CA5F07B09D716C234A265E9D704650F50B5D"
+    },
+    "LAN": {
+      "commit": "1a00ec4723a1438857cf4df1797b8844c983fcb8",
+      "archive": "LAN-1a00ec4723a1.zip",
+      "sha256": "7F059CE398370D41DDE98CCCC31A3AF86F19CC590890C9387C4A4756E3E22FB9",
+      "frozenExecutableSha256": "B75509A793E31E0EB58AC9870C08E1635281A1A16EE0A78FE2C7FF983D8D6811"
+    }
+  },
+  "dependencies": {
+    "archive": "Dependencies/Flycast-vendor-source.zip",
+    "sha256": "2DBEA744CB1FED3ECFD970EEAA0D31F884A80161773CD62DCFFC357D89880C82",
+    "files": 15116
+  },
+  "status": "PRIVATE SOURCE HANDOFF REVIEW; licensing and final distribution not cleared",
+  "networkRequiredToRestore": false
+}

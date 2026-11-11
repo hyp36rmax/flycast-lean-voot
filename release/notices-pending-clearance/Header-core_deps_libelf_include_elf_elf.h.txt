@@ -1,0 +1,5 @@
+/*
+ * Copyright (c) 1999-2004 University of New South Wales
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
+ */

@@ -1,0 +1,2 @@
+Copyright 2011 Google Inc. All Rights Reserved.
+The supplied font metadata identifies Apache License 2.0. See Apache-2.0-terms.txt.

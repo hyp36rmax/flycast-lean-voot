@@ -107,6 +107,8 @@ The [source-history index](DEVELOPMENT_HISTORY_V1.0.md) follows the upstream fou
 ## Documentation
 
 - [Engineering and runtime interfaces](docs/ENGINEERING.md)
+- [Pinned release source and delivery](docs/RELEASE-SOURCE-MAPPING.md)
+- [Measurement methodology](docs/performance/METHODOLOGY.md)
 - [Rendering, projection and visibility](docs/rendering/RENDERING.md)
 - [Performance studies and limitations](docs/performance/PERFORMANCE.md)
 - [Hardware and validation platform](docs/hardware/VALIDATION-PLATFORM.md)
