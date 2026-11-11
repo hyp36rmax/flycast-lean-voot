@@ -19,7 +19,7 @@
 #pragma once
 #include "types.h"
 #include "net_platform.h"
-#if defined(_WIN32) && defined(FLYCAST_HOSTED_STARTUP)
+#if defined(FLYCAST_OT_LAN_TRANSPORT)
 #include "ot_lan_transport.h"
 #include <memory>
 #endif
@@ -62,7 +62,7 @@ public:
 	{
 		enableNetworkBroadcast(false);
 		emu.setNetworkState(false);
-#if defined(_WIN32) && defined(FLYCAST_HOSTED_STARTUP)
+#if defined(FLYCAST_OT_LAN_TRANSPORT)
 		if (std::getenv("PROJECTOT_LAN08_SESSION") != nullptr)
 			networkStopping = true;
 		if (auto link = std::atomic_exchange(&lan, std::shared_ptr<otlan::Transport>{}))
@@ -95,16 +95,16 @@ public:
 	bool waitForData(std::chrono::microseconds timeout);
 #endif
 
+#if defined(FLYCAST_OT_LAN_TRANSPORT)
 	void resetLanBoard()
 	{
-#if defined(_WIN32) && defined(FLYCAST_HOSTED_STARTUP)
 		if (auto link = std::atomic_load(&lan))
 		{
 			link->ResetBoard();
 			receivedData.clear();
 		}
-#endif
 	}
+#endif
 
 	void send(u8 *data, u32 size, u16 packetNumber)
 	{
@@ -187,7 +187,7 @@ private:
 
 	void poll()
 	{
-#if defined(_WIN32) && defined(FLYCAST_HOSTED_STARTUP)
+#if defined(FLYCAST_OT_LAN_TRANSPORT)
 		if (auto link = std::atomic_load(&lan))
 		{
 			if (link->Failed())
@@ -246,7 +246,7 @@ private:
 
 	void send(const sockaddr_in *addr, const Packet *packet, u32 size)
 	{
-#if defined(_WIN32) && defined(FLYCAST_HOSTED_STARTUP)
+#if defined(FLYCAST_OT_LAN_TRANSPORT)
 		if (auto link = std::atomic_load(&lan))
 		{
 			try { link->Send(*addr, packet, size); }
@@ -269,7 +269,7 @@ private:
 		DEBUG_LOG(NETWORK, "Sent port %d pckt %d size %x", ntohs(addr->sin_port), packet->type, size - (u32)packet->size(0));
 	}
 
-#if defined(_WIN32) && defined(FLYCAST_HOSTED_STARTUP)
+#if defined(FLYCAST_OT_LAN_TRANSPORT)
 	std::shared_ptr<otlan::Transport> lan;
 #endif
 	sock_t sock = INVALID_SOCKET;

@@ -37,7 +37,7 @@ bool NaomiNetwork::waitForData(std::chrono::microseconds timeout)
 		return true;
 	if (timeout.count() <= 0)
 		return false;
-#if defined(FLYCAST_HOSTED_STARTUP)
+#if defined(FLYCAST_OT_LAN_TRANSPORT)
 	if (auto link = std::atomic_load(&lan))
 	{
 		try { return link->Wait(timeout); }
@@ -69,7 +69,7 @@ bool NaomiNetwork::init()
 		miniupnp.AddPortMapping(config::LocalPort, true);
 	}
 
-#if defined(_WIN32) && defined(FLYCAST_HOSTED_STARTUP)
+#if defined(FLYCAST_OT_LAN_TRANSPORT)
 	if (const char* session = std::getenv("PROJECTOT_LAN08_SESSION"))
 	{
 		const auto env = [](const char* name) {
@@ -270,7 +270,7 @@ bool NaomiNetwork::startNetwork()
 			}
 		}
 
-#if defined(_WIN32) && defined(FLYCAST_HOSTED_STARTUP)
+#if defined(FLYCAST_OT_LAN_TRANSPORT)
 		if (auto link = std::atomic_load(&lan))
 		{
 			serverIp = link->Peer().sin_addr.s_addr;
@@ -371,7 +371,7 @@ bool NaomiNetwork::receive(const sockaddr_in *addr, const Packet *packet, u32 si
 		break;
 
 	case Start:
-#if defined(_WIN32) && defined(FLYCAST_HOSTED_STARTUP)
+#if defined(FLYCAST_OT_LAN_TRANSPORT)
 		if (std::atomic_load(&lan) && (config::ActAsServer || slotId != 1 || packet->start.nodeCount != 2))
 			break;
 #endif
