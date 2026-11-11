@@ -69,7 +69,7 @@ for (key,value),c in zip(F['after']['materials'].items(),colors):
     width=660*value/600
     f.rect(x,296,width,36,c,c);x+=width
 for i,((key,value),c) in enumerate(zip(F['after']['materials'].items(),colors)):
-    y=374+i*37;f.rect(30,y-15,14,14,c,c);f.text(56,y,f'{key}   0 → {value} polygon records',20)
+    y=396+i*37;f.rect(30,y-15,14,14,c,c);f.text(56,y,f'{key}   0 → {value} polygon records',20)
 f.line(30,336,690,336)
 for v in [0,200,400,600]:f.text(30+660*v/600,358,str(v),17,anchor='middle')
 f.lines(30,506,['Linear scale starts at zero; upper bound 600 polygon records.','Whole sample: 1,687 → 2,411 polygons; these groups add 576.','The first two raw TA samples were byte-identical.','Groups identify local mesh evidence, not formal object IDs.','This is submission evidence, not an FPS or latency result.','Matched gameplay comparison: pending provenance and rights.'],20,step=32)

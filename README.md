@@ -88,9 +88,7 @@ Focused measurements helped us decide which changes were worth keeping. Their wo
 
 Both Windows x64 Release profiles built from a clean source checkout. Focused rendering, host, transport and actual runtime startup/shutdown checks passed at source checkpoint `e8d678072a10`. Full physical gameplay and sustained cross-PC LAN qualification remain open for that revision. [Validation scope](docs/ENGINEERING.md#validation-scope)
 
-![Historical R&D-03D TA parser mean and P99 wall times with workload and sample counts](docs/assets/performance/rd03d-parser.svg)
-
-The [SH-4 figure](docs/assets/performance/rd03e-dispatch.svg) includes the render-start P99 regression; the [NAOMI waiting figure](docs/assets/performance/rd04a-link-wait.svg) includes both cabinet roles. [Figure evidence and limits](docs/assets/VISUAL-EVIDENCE.md) distinguish historical measurements from current-source validation.
+The [parser figure](docs/assets/performance/rd03d-parser.svg) retains mean and P99 timings; the [SH-4 figure](docs/assets/performance/rd03e-dispatch.svg) includes the render-start P99 regression; the [NAOMI waiting figure](docs/assets/performance/rd04a-link-wait.svg) includes both cabinet roles. Detailed charts stay with their technical notes. [Figure evidence and limits](docs/assets/VISUAL-EVIDENCE.md) distinguish historical measurements from current-source validation.
 
 ## Building Flycast Lean VOOT
 
