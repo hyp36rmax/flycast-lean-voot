@@ -1,8 +1,5 @@
-//structs were getting tooo many , so i moved em here !
-
 #pragma once
-//bits that affect drawing (for caching params)
-#define PCW_DRAW_MASK (0x000000CC)
+#include "types.h"
 
 #pragma pack(push, 1)   // n = 1
 //	Global Param/misc structs
@@ -13,35 +10,28 @@ union PCW
 	{
 		//Obj Control        //affects drawing ?
 		u32 UV_16bit    : 1; //0
-		u32 Gouraud     : 1; //0
+		u32 Gouraud     : 1; //1
 		u32 Offset      : 1; //1
 		u32 Texture     : 1; //1
 		u32 Col_Type    : 2; //00
 		u32 Volume      : 1; //1
 		u32 Shadow      : 1; //1
 
-		u32 Reserved    : 8; //0000 0000
+		u32             : 8;
 
 		// Group Control
 		u32 User_Clip   : 2;
 		u32 Strip_Len   : 2;
-		u32 Res_2       : 3;
+		u32             : 3;
 		u32 Group_En    : 1;
 
 		// Para Control
 		u32 ListType    : 3;
-		u32 Res_1       : 1;
+		u32             : 1;
 		u32 EndOfStrip  : 1;
 		u32 ParaType    : 3;
 	};
 	u8 obj_ctrl;
-	struct
-	{
-		u32 padin  : 8;
-		u32 S6X    : 1;    //set by TA preprocessing if sz64
-		u32 padin2 : 19;
-		u32 PTEOS  : 4;
-	};
 	u32 full;
 };
 
@@ -52,7 +42,7 @@ union ISP_TSP
 {
 	struct
 	{
-		u32 Reserved    : 20;
+		u32             : 20;
 		u32 DCalcCtrl   : 1;
 		u32 CacheBypass : 1;
 		u32 UV_16b      : 1; //In TA they are replaced
@@ -108,7 +98,7 @@ union TSP
 		u32 SrcInstr    : 3;
 	};
 	u32 full;
-} ;
+};
 
 
 //// END TSP Instruction Word
@@ -120,18 +110,18 @@ union TCW
 	struct
 	{
 		u32 TexAddr   :21;
-		u32 Reserved  : 4;
+		u32           : 4;
 		u32 StrideSel : 1;
 		u32 ScanOrder : 1;
 		u32 PixelFmt  : 3;
 		u32 VQ_Comp   : 1;
 		u32 MipMapped : 1;
-	} ;
+	};
 	struct
 	{
-		u32 pading_0  :21;
+		u32           :21;
 		u32 PalSelect : 6;
-	} ;
+	};
 	u32 full;
 };
 
@@ -695,3 +685,32 @@ const u32 ParamType_Vertex_Parameter=7;
 //Reserved
 const u32 ParamType_Reserved_1=3;
 const u32 ParamType_Reserved_2=6;
+
+// Tile parameters in region array. One per tile * number of passes
+union RegionArrayTile
+{
+	struct
+	{
+		u32           		: 2;
+		u32 X				: 6;
+		u32 Y				: 6;
+		u32           		: 14;
+		u32 FlushAccumulate	: 1;
+		u32 PreSort			: 1;	// For type 2 only. Ignored for type 1.
+		u32 NoZClear		: 1;
+		u32 LastRegion		: 1;
+	};
+	u32 full;
+};
+
+enum PixelFormat
+{
+	Pixel1555 = 0,
+	Pixel565 = 1,
+	Pixel4444 = 2,
+	PixelYUV = 3,
+	PixelBumpMap = 4,
+	PixelPal4 = 5,
+	PixelPal8 = 6,
+	PixelReserved = 7
+};

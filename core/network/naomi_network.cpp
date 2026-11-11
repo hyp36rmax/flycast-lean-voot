@@ -1,0 +1,626 @@
+/*
+	Copyright 2022 flyinghead
+
+	This file is part of Flycast.
+
+    Flycast is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 2 of the License, or
+    (at your option) any later version.
+
+    Flycast is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with Flycast.  If not, see <https://www.gnu.org/licenses/>.
+ */
+#include "naomi_network.h"
+#include "hw/naomi/naomi_flashrom.h"
+#include "cfg/option.h"
+#include "stdclass.h"
+#include "oslib/oslib.h"
+#include "oslib/i18n.h"
+using namespace i18n;
+
+#include <chrono>
+#include <thread>
+#include <map>
+
+NaomiNetwork naomiNetwork;
+
+#ifdef _WIN32
+bool NaomiNetwork::waitForData(std::chrono::microseconds timeout)
+{
+	if (!receivedData.empty())
+		return true;
+	if (timeout.count() <= 0)
+		return false;
+#if defined(FLYCAST_HOSTED_STARTUP)
+	if (auto link = std::atomic_load(&lan))
+	{
+		try { return link->Wait(timeout); }
+		catch (const std::exception& error) { throw Exception(error.what()); }
+	}
+	if (networkStopping && std::getenv("PROJECTOT_LAN08_SESSION") != nullptr)
+		return false;
+#endif
+	fd_set readable;
+	FD_ZERO(&readable);
+	FD_SET(sock, &readable);
+	timeval limit { static_cast<long>(timeout.count() / 1000000),
+		static_cast<long>(timeout.count() % 1000000) };
+	const int ready = select(0, &readable, nullptr, nullptr, &limit);
+	if (ready < 0)
+		throw Exception("Receive wait failed: errno " + std::to_string(get_last_error()));
+	return ready != 0;
+}
+#endif
+
+bool NaomiNetwork::init()
+{
+	if (!config::NetworkEnable)
+		return false;
+	loopbackOnly = config::NaomiLoopbackOnly;
+	if (config::EnableUPnP && !loopbackOnly)
+	{
+		miniupnp.Init();
+		miniupnp.AddPortMapping(config::LocalPort, true);
+	}
+
+#if defined(_WIN32) && defined(FLYCAST_HOSTED_STARTUP)
+	if (const char* session = std::getenv("PROJECTOT_LAN08_SESSION"))
+	{
+		const auto env = [](const char* name) {
+			const char* value = std::getenv(name);
+			return std::string(value != nullptr ? value : "");
+		};
+		try
+		{
+			const int port = config::ActAsServer ? 38901 : 38902;
+			if (loopbackOnly || settings.content.gameId != "VIRTUAL-ON ORATORIO TANGRAM" || config::LocalPort != port)
+				throw std::invalid_argument("LAN08 is only enabled for the hosted cross-PC VOOT cabinet");
+			if (networkStopping)
+				return false;
+			auto link = std::make_shared<otlan::Transport>(
+				otlan::endpoint(env("PROJECTOT_LAN08_LOCAL"), port),
+				otlan::endpoint(env("PROJECTOT_LAN08_PEER"), port == 38901 ? 38902 : 38901),
+				otlan::parseSession(session), env("PROJECTOT_LAN08_METRICS"), env("PROJECTOT_LAN08_FAILURE"));
+			std::atomic_store(&lan, link);
+			if (networkStopping)
+			{
+				std::atomic_store(&lan, std::shared_ptr<otlan::Transport>{});
+				link->Stop();
+				return false;
+			}
+			return true;
+		}
+		catch (const std::exception& error)
+		{
+			const auto failure = env("PROJECTOT_LAN08_FAILURE");
+			if (auto file = std::fopen(failure.c_str(), "wb"))
+			{
+				std::fputs(error.what(), file);
+				std::fclose(file);
+			}
+			throw Exception(error.what());
+		}
+	}
+#endif
+	createSocket();
+
+	return true;
+}
+
+void NaomiNetwork::createSocket()
+{
+	sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+	if (sock == INVALID_SOCKET)
+	{
+		naomi_network_trace::event("socket_failed",sock,nullptr,-1,-1,0,-1,get_last_error());
+		ERROR_LOG(NETWORK, "Socket creation failed: errno %d", get_last_error());
+		throw Exception("Socket creation failed");
+	}
+#if defined(_WIN32) && defined(FLYCAST_HOSTED_STARTUP)
+	// Hosted LAN only: a jumbo local NIC must not emit oversized IP packets
+	// onto a standard-Ethernet peer path. Windows fragments the original UDP
+	// datagram; the NAOMI payload and receiving protocol remain unchanged.
+	const char *safeMtu = std::getenv("PROJECTOT_LAN_SAFE_MTU");
+	if (safeMtu != nullptr && std::string(safeMtu) == "1"
+			&& settings.content.gameId == "VIRTUAL-ON ORATORIO TANGRAM")
+	{
+		const DWORD mtu = 1500;
+		const DWORD dontFragment = 0;
+		const int mtuResult = setsockopt(sock, IPPROTO_IP, IP_USER_MTU, (const char *)&mtu, sizeof(mtu));
+		const int mtuError = mtuResult == 0 ? 0 : get_last_error();
+		const int fragmentResult = setsockopt(sock, IPPROTO_IP, IP_DONTFRAGMENT, (const char *)&dontFragment, sizeof(dontFragment));
+		const int fragmentError = fragmentResult == 0 ? 0 : get_last_error();
+		DWORD effectiveMtu = 0;
+		int size = sizeof(effectiveMtu);
+		const int queryResult = getsockopt(sock, IPPROTO_IP, IP_USER_MTU, (char *)&effectiveMtu, &size);
+		const bool applied = mtuResult == 0 && fragmentResult == 0 && queryResult == 0 && effectiveMtu == mtu;
+		naomi_network_trace::event("lan_socket_mtu", sock, nullptr, -1, -1, effectiveMtu,
+			applied ? 1 : 0, mtuError != 0 ? mtuError : fragmentError);
+		if (!applied)
+		{
+			closesocket(sock);
+			sock = INVALID_SOCKET;
+			throw Exception("LAN socket MTU configuration unavailable; standard-size IP fragmentation could not be enabled");
+		}
+	}
+#endif
+	int option = 1;
+	setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, (const char *)&option, sizeof(option));
+
+	sockaddr_in serveraddr{};
+	serveraddr.sin_family = AF_INET;
+	serveraddr.sin_port = htons(config::LocalPort);
+	serveraddr.sin_addr.s_addr = loopbackOnly ? htonl(INADDR_LOOPBACK) : INADDR_ANY;
+
+	if (::bind(sock, (sockaddr *)&serveraddr, sizeof(serveraddr)) < 0)
+	{
+		naomi_network_trace::event("bind_failed",sock,&serveraddr,-1,-1,0,-1,get_last_error());
+		ERROR_LOG(NETWORK, "NaomiServer: bind() failed. errno=%d", get_last_error());
+		closesocket(sock);
+
+		throw Exception("Socket bind failed");
+	}
+	naomi_network_trace::event("bound_udp",sock);
+	set_non_blocking(sock);
+
+    // Allow broadcast packets to be sent
+    int broadcast = loopbackOnly ? 0 : 1;
+    if (setsockopt(sock, SOL_SOCKET, SO_BROADCAST, (const char *)&broadcast, sizeof(broadcast)) == -1)
+        WARN_LOG(NETWORK, "setsockopt(SO_BROADCAST) failed. errno=%d", get_last_error());
+}
+
+bool NaomiNetwork::startNetwork()
+{
+	if (!init())
+		return false;
+
+	slotId = 0;
+	slotCount = 0;
+	slaves.clear();
+	naomi_network_trace::event("handshake_start",sock,nullptr,-1,-1,0,config::ActAsServer?1:0,0,slotId,slotCount);
+
+	using namespace std::chrono;
+
+	if (config::ActAsServer)
+	{
+		enableNetworkBroadcast(true);
+		const auto timeout = seconds(20);
+		NOTICE_LOG(NETWORK, "Waiting for slave connections");
+		steady_clock::time_point start_time = steady_clock::now();
+
+		while (steady_clock::now() - start_time < timeout)
+		{
+			if (networkStopping)
+				return false;
+
+			std::string notif;
+			if (slaves.empty()) {
+				notif = T("Waiting for players...");
+			}
+			else {
+				notif = strprintf(translatePlural("%d player connected. Waiting...", "%d players connected. Waiting...", slaves.size()),
+						(int)slaves.size());
+			}
+			os_notify(notif.c_str(), timeout.count() * 2000);
+
+			poll();
+
+			if ((maxSlots != 0 && slaves.size() == (unsigned)maxSlots - 1)
+					|| (_startNow && !slaves.empty()))
+				break;
+			std::this_thread::sleep_for(milliseconds(20));
+		}
+		enableNetworkBroadcast(false);
+		if (!slaves.empty())
+		{
+			NOTICE_LOG(NETWORK, "Master starting: %zd slaves", slaves.size());
+			_startNow = true;
+			slotCount = slaves.size() + 1;
+			Packet packet(Start);
+			packet.start.nodeCount = slotCount;
+			for (auto& slave : slaves)
+				send(&slave.addr, &packet, packet.size());
+
+			nextPeer = slaves[0].addr;
+
+			os_notify(T("Starting game"), 2000);
+			setNaomiNetworkConfig(0, slotCount);
+			naomi_network_trace::event("handshake_complete",sock,&nextPeer,-1,-1,0,1,0,slotId,slotCount);
+
+			return true;
+		}
+		os_notify(T("No player connected"), 8000);
+	}
+	else
+	{
+		const auto timeout = seconds(30);
+		serverIp = loopbackOnly ? htonl(INADDR_LOOPBACK) : INADDR_BROADCAST;
+		u16 serverPort = SERVER_PORT;
+		if (!config::NetworkServer.get().empty())
+		{
+			auto pos = config::NetworkServer.get().find_last_of(':');
+			std::string server;
+			if (pos != std::string::npos)
+			{
+				serverPort = atoi(config::NetworkServer.get().substr(pos + 1).c_str());
+				server = config::NetworkServer.get().substr(0, pos);
+			}
+			else
+				server = config::NetworkServer;
+			if (loopbackOnly && server != "127.0.0.1")
+				throw Exception("Loopback cabinet requires server 127.0.0.1");
+			addrinfo *resultAddr;
+			if (getaddrinfo(server.c_str(), 0, nullptr, &resultAddr))
+				WARN_LOG(NETWORK, "Server %s is unknown", server.c_str());
+			else
+			{
+				for (addrinfo *ptr = resultAddr; ptr != nullptr; ptr = ptr->ai_next)
+					if (ptr->ai_family == AF_INET)
+					{
+						serverIp = ((sockaddr_in *)ptr->ai_addr)->sin_addr.s_addr;
+						break;
+					}
+				freeaddrinfo(resultAddr);
+			}
+		}
+
+#if defined(_WIN32) && defined(FLYCAST_HOSTED_STARTUP)
+		if (auto link = std::atomic_load(&lan))
+		{
+			serverIp = link->Peer().sin_addr.s_addr;
+			serverPort = ntohs(link->Peer().sin_port);
+		}
+#endif
+		NOTICE_LOG(NETWORK, "Connecting to server");
+		os_notify(T("Connecting to server"), 10000);
+		steady_clock::time_point start_time = steady_clock::now();
+
+		while (!networkStopping && !_startNow && steady_clock::now() - start_time < timeout)
+		{
+			if (slotId == 0)
+			{
+				Packet packet(SyncReq);
+				sockaddr_in serverAddr{};
+				serverAddr.sin_family = AF_INET;
+				serverAddr.sin_port = htons(serverPort);
+				serverAddr.sin_addr.s_addr = serverIp;
+				send(&serverAddr, &packet, packet.size());
+			}
+			std::this_thread::sleep_for(milliseconds(10));
+			poll();
+		}
+		if (!networkStopping && _startNow)
+		{
+			setNaomiNetworkConfig(slotId, slotCount, config::NaomiSatellite && satelliteSupported);
+			naomi_network_trace::event("handshake_complete",sock,&nextPeer,-1,-1,0,1,0,slotId,slotCount);
+			return true;
+		}
+	}
+	naomi_network_trace::event(networkStopping?"handshake_cancelled":"handshake_timeout",sock,nullptr,-1,-1,0,0,0,slotId,slotCount);
+	return false;
+}
+
+bool NaomiNetwork::receive(const sockaddr_in *addr, const Packet *packet, u32 size)
+{
+	DEBUG_LOG(NETWORK, "Received port %d pckt %d size %x", ntohs(addr->sin_port), packet->type, size - (u32)packet->size(0));
+	switch (packet->type)
+	{
+	case SyncReq:
+		if (config::ActAsServer && !_startNow)
+		{
+			Slave *slave = nullptr;
+			for (auto& s : slaves)
+				if (s.addr.sin_port == addr->sin_port && s.addr.sin_addr.s_addr == addr->sin_addr.s_addr)
+				{
+					slave = &s;
+					break;
+				}
+			if (slave == nullptr)
+			{
+				slaves.push_back(Slave());
+				slave = &slaves.back();
+				slave->state = 0; // unused
+				slave->addr = *addr;
+			}
+			Packet reply(SyncReply);
+			reply.sync.nodeId = (u16)(slave - &slaves[0] + 1);
+			if (slave - &slaves[0] + 1 < (int)slaves.size())
+			{
+				Slave *nextSlave = &slaves[slave - &slaves[0] + 1];
+				reply.sync.nextNodeIp = nextSlave->addr.sin_addr.s_addr;
+				reply.sync.nextNodePort = nextSlave->addr.sin_port;
+			}
+			else
+			{
+				//FIXME local ip?
+				reply.sync.nextNodeIp = 0;
+				reply.sync.nextNodePort = htons(config::LocalPort);
+			}
+			send(addr, &reply, reply.size());
+
+			if (reply.sync.nodeId > 1)
+			{
+				// notify previous slave of nextNode change
+				reply.sync.nextNodeIp = addr->sin_addr.s_addr;
+				reply.sync.nextNodePort = addr->sin_port;
+				reply.sync.nodeId--;
+				slave = &slaves[reply.sync.nodeId - 1];
+				send(&slave->addr, &reply, reply.size());
+			}
+		}
+		break;
+
+	case SyncReply:
+		if (!config::ActAsServer && !_startNow)
+		{
+			serverIp = addr->sin_addr.s_addr;
+			slotId = packet->sync.nodeId;
+			nextPeer.sin_family = AF_INET;
+			nextPeer.sin_port = packet->sync.nextNodePort;
+			nextPeer.sin_addr.s_addr = packet->sync.nextNodeIp == 0 ? addr->sin_addr.s_addr : packet->sync.nextNodeIp;
+			naomi_network_trace::event("slave_route_assigned",sock,&nextPeer,SyncReply,-1,(int)size,1,0,slotId,slotCount);
+			std::string notif = strprintf(T("Connected as slot %d"), slotId);
+			os_notify(notif.c_str(), 2000);
+		}
+		break;
+
+	case Start:
+#if defined(_WIN32) && defined(FLYCAST_HOSTED_STARTUP)
+		if (std::atomic_load(&lan) && (config::ActAsServer || slotId != 1 || packet->start.nodeCount != 2))
+			break;
+#endif
+		if (!_startNow)
+		{
+			slotCount = packet->start.nodeCount;
+			sendAck(addr);
+			_startNow = true;
+		}
+		break;
+
+	case Data:
+		if (!receivedData.empty()) {
+			naomi_network_trace::event("rx_overwrite_pending",sock,addr,Data,packet->data.packetNumber,(int)size,0,0,slotId,slotCount,(int)receivedData.size());
+			INFO_LOG(NETWORK, "Received packet overwritten");
+		}
+		receivedData.resize(size - packet->size(0));
+		memcpy(receivedData.data(), packet->data.payload, receivedData.size());
+		packetNumber = packet->data.packetNumber;
+		// TODO? sendAck(peer, port);
+		return true;
+
+	case Ack:
+		break;
+
+	case NAck:
+		WARN_LOG(NETWORK, "NAK received");
+		throw Exception("NAK received");
+		break;
+
+	default:
+		WARN_LOG(NETWORK, "Unknown packet type %d", packet->type);
+		throw Exception("Unknown packet type ");
+		break;
+	}
+
+	return false;
+}
+
+// Sets the game network config using MIE eeprom or bbsram:
+// Node -1 disables network
+// Node 0 is master, nodes 1+ are slave
+void setNaomiNetworkConfig(int node, int nodeCount, bool satellite)
+{
+	const std::string& gameId = settings.content.gameId;
+	if (gameId == "ALIEN FRONT")
+	{
+		// no way to disable the network
+		write_naomi_eeprom(0x3f, node == 0 ? 0 : 1);
+	}
+	else if (gameId == "MOBILE SUIT GUNDAM JAPAN" // gundmct
+			|| gameId == "MOBILE SUIT GUNDAM DELUXE JAPAN") // gundmxgd
+	{
+		write_naomi_eeprom(0x38, node == -1 ? 2
+				: node == 0 ? 0 : 1);
+	}
+	else if (gameId == " BIOHAZARD  GUN SURVIVOR2")
+	{
+		write_naomi_flash(0x21c, node == 0 ? 0 : 1);	// CPU ID - 1
+		write_naomi_flash(0x22a, node == -1 ? 0 : 1);	// comm link on
+	}
+	else if (gameId == "HEAVY METAL JAPAN")
+	{
+		write_naomi_eeprom(0x31, node == -1 ? 0 : node == 0 ? 1 : 2);
+	}
+	else if (gameId == "OUTTRIGGER     JAPAN")
+	{
+		write_naomi_flash(0x21a, node == -1 ? 0 : 1);	// network on
+		write_naomi_flash(0x21b, node);					// node id
+	}
+	else if (gameId == "SLASHOUT JAPAN VERSION")
+	{
+		write_naomi_eeprom(0x30, node + 1);
+	}
+	else if (gameId == "SPAWN JAPAN")
+	{
+		write_naomi_eeprom(0x44, node == -1 ? 0
+				: node == 0 ? 1 : 2);
+		// the game wants the region there or it resets the eeprom
+		write_naomi_eeprom(0x30, config::Region);
+	}
+	else if (gameId == "SPIKERS BATTLE JAPAN VERSION")
+	{
+		write_naomi_eeprom(0x30, node == -1 ? 0
+				: node == 0 ? 1 : 2);
+	}
+	else if (gameId == "VIRTUAL-ON ORATORIO TANGRAM")
+	{
+		u8 v;
+		switch (node)
+		{
+		case -1:
+			v = 3; break;
+		case 0:
+			v = 0; break;
+		default:
+			if (satellite)
+				v = 2;
+			else
+				v = 1;
+			break;
+		}
+		naomi_network_trace::event("voot_runtime_role",INVALID_SOCKET,nullptr,-1,-1,0,(int)v,0,node,nodeCount,(int)read_naomi_eeprom(0x45));
+		write_naomi_eeprom(0x45, v);
+	}
+	else if (gameId == "WAVE RUNNER GP")
+	{
+		write_naomi_eeprom(0x33, node);
+		write_naomi_eeprom(0x35, node == -1 ? 2
+				: node == 0 ? 0 : 1);
+	}
+	else if (gameId == "WORLD KICKS")
+	{
+		write_naomi_flash(0x224, node == -1 ? 0 : 1);	// network on
+		write_naomi_flash(0x220, node == 0 ? 0 : 1);	// node id
+	}
+	else if (gameId == "CLUB KART IN JAPAN" && settings.content.fileName.substr(0, 6) != "clubkp")
+	{
+		u8 v;
+		switch (node)
+		{
+		case -1:
+			v = 0; break;
+		case 0:
+			v = 1; break;
+		default:
+			if (satellite)
+				v = 3;
+			else
+				v = 2;
+			break;
+		}
+		write_naomi_eeprom(0x34, v);
+		if (node != -1)
+		{
+			// car #
+			if (settings.content.fileName.substr(0, 7) == "clubkrt") {
+				u8 b = read_naomi_eeprom(0x4a) & 0xf8;
+				write_naomi_eeprom(0x4a, b | node);
+			}
+			else {
+				// clubk2k3
+				u8 b = read_naomi_eeprom(0x3d) & 0xc7;
+				write_naomi_eeprom(0x3d, b | (node << 3));
+			}
+		}
+	}
+	else if (gameId == "INITIAL D"
+			|| gameId == "INITIAL D Ver.2"
+			|| gameId == "INITIAL D Ver.3")
+	{
+		u8 b = read_naomi_eeprom(0x34) & 0xcf;
+		write_naomi_eeprom(0x34, (node == -1 ? 0x00 : node == 0 ? 0x10 : 0x20) | b);
+	}
+	else if (gameId == "THE KING OF ROUTE66")
+	{
+		u8 b = read_naomi_eeprom(0x3d) & 0xf;
+		write_naomi_eeprom(0x3d, (node == -1 ? 0x40 : node == 0 ? 0x50 : 0x60) | b);
+	}
+	else if (gameId == "MAXIMUM SPEED")
+	{
+		configure_maxspeed_flash(node != -1, node == 0);
+	}
+	else if (gameId == "F355 CHALLENGE JAPAN" && settings.content.fileName != "f355")
+	{
+		write_naomi_flash(0x230, node == -1 ? 0 : node == 0 ? 1 : 2);
+		if (node != -1)
+			// car number (0 to 7)
+			write_naomi_flash(0x231, node);
+		// 0x233: cabinet type (0 deluxe, 1 twin)
+		write_naomi_flash(0x233, config::MultiboardSlaves >= 2 ? 0 : 1);
+	}
+	else if (gameId == "SEGA TETRIS") {
+		write_naomi_eeprom(0x50, node + 1);
+	}
+	else if (gameId.substr(0, 6) == " DERBY")
+	{
+		if (read_naomi_eeprom(3) == 'B' && read_naomi_eeprom(4) == 'D' && read_naomi_eeprom(5) == 'Y')
+		{
+			// derbyoc2: DOC 2 v2.1
+			if (node == -1 && config::MultiboardSlaves <= 1 && !settings.naomi.slave)
+				// no link (satellite)
+				write_naomi_eeprom(0x30, read_naomi_eeprom(0x30) | 1);
+			else
+				write_naomi_eeprom(0x30, read_naomi_eeprom(0x30) & 0xfe);
+		}
+		else
+		{
+			// DOC (BAX0)
+			// DOC 2000 (BBX0)
+			// DOC WE (BEF0)
+			if (config::MultiboardSlaves <= 1 && !settings.naomi.slave)
+			{
+				if (node == -1)
+					// no link
+					write_naomi_eeprom(0x45, (read_naomi_eeprom(0x45) & 0xfc) | 3);
+				else
+					// satellite
+					write_naomi_eeprom(0x45, (read_naomi_eeprom(0x45) & 0xfc) | 2);
+			}
+			else {
+				// Can't disable the network on the main screen
+				write_naomi_eeprom(0x45, (read_naomi_eeprom(0x45) & 0xfc));
+			}
+			if (node != -1 && nodeCount < 5)
+				WARN_LOG(NETWORK,"Derby Owners Club doesn't support less than 4 satellites");
+			write_naomi_eeprom(0x4e, (read_naomi_eeprom(0x4e) & 0xf8) | std::max(nodeCount - 2, 3));
+		}
+	}
+}
+
+// Returns a pair (max nodes, satellite supported)
+std::pair<int, bool> naomiNetworkMaxNodes()
+{
+	// gameId -> (max nodes, satellite supported)
+	static std::map<std::string, std::pair<int, bool>> games {
+		{ "ALIEN FRONT", { 4, false } },
+		{ "MOBILE SUIT GUNDAM JAPAN", { 4, false } },
+		{ "MOBILE SUIT GUNDAM DELUXE JAPAN", { 4, false } },
+		{ " BIOHAZARD  GUN SURVIVOR2", { 2, false } },
+		{ "HEAVY METAL JAPAN", { 2, false } },
+		{ "OUTTRIGGER     JAPAN", { 4, false } },
+		{ "SLASHOUT JAPAN VERSION", { 4, false } },
+		{ "SPAWN JAPAN", { 4, false } },
+		{ "SPIKERS BATTLE JAPAN VERSION", { 4, false } },
+		{ "VIRTUAL-ON ORATORIO TANGRAM", { 3, true } },
+		{ "WAVE RUNNER GP", { 4, false } },
+		{ "WORLD KICKS", { 2, false } },
+		{ "F355 CHALLENGE JAPAN", { 8, false } },
+		{ "SEGA TETRIS", { 2, false } },
+		{ " DERBY OWNERS CLUB WE ---------", { 9, false } },
+		{ " DERBY OWNERS CLUB ------------", { 9, false } },
+		{ " DERBY OWNERS CLUB II-----------", { 9, false } },
+		// Naomi 2
+		{ "CLUB KART IN JAPAN", { 8, true } },
+		{ "INITIAL D", { 2, false } },
+		{ "INITIAL D Ver.2", { 2, false } },
+		{ "INITIAL D Ver.3", { 2, false } },
+		{ "THE KING OF ROUTE66", { 2, false } },
+		{ "SEGA DRIVING SIMULATOR", { 3, false } },
+	};
+	if (!config::NetworkEnable || settings.naomi.slave)
+		return {};
+	if (settings.content.fileName.substr(0, 6) == "clubkp" || settings.content.fileName == "f355")
+		// Club Kart Prize and F355 (vanilla) don't support networking
+		return {};
+	auto it = games.find(settings.content.gameId);
+	if (it == games.end())
+		return {};
+	else
+		return it->second;
+}

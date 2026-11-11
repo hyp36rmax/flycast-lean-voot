@@ -1,11 +1,11 @@
 #pragma once
 #include "types.h"
-#include "sh4_interpreter.h"
-//#include "dc\sh4\rec_v1\BasicBlock.h"
+#include "sh4_if.h"
+#include <cstring>
 
-//class BasicBlock;
-//typedef void (FASTCALL RecOpCallFP) (u32 op,u32 pc,BasicBlock* bb);
+#define sh4op(str) void  DYNACALL str (Sh4Context *ctx, u32 op)
 
+typedef void (DYNACALL OpCallFP) (Sh4Context *ctx, u32 op);
 extern OpCallFP* OpPtr[0x10000];
 
 typedef void OpDissasmFP(char* out,const char* const FormatString,u32 pc,u16 opcode);
@@ -18,20 +18,38 @@ enum sh4_eu
 	LS,
 	FE,
 	CO,
-	MA,
-	sh4_eu_max
 };
 
-//exception fixup needed , added it to fix exception on opcodes that modify before exept :)
-enum sh4_exept_fixup
+enum OpcodeType
 {
-	fix_none,
-	rn_opt_1,    //1 if n!=m
-	rn_opt_2,    //2 if n!=m
-	rn_opt_4,    //4 if n!=m
-	rn_4,        //Always 4 from rn
-	rn_fpu_4,    //4 or 8, according to FPU size
+	//basic
+	Normal       = 0,   // Heh , nothing special :P
+	ReadsPC      = 1,   // PC must be set upon calling it
+	WritesPC     = 2,   // It will write PC (branch)
+	Delayslot    = 4,   // Has a delayslot opcode , valid only when WritesPC is set
+
+	WritesSR     = 8,   // Writes to SR , and UpdateSR needs to be called
+	WritesFPSCR  = 16,  // Writes to FPSCR , and UpdateSR needs to be called
+	Invalid      = 128, // Invalid
+
+	UsesFPU      = 2048, // Floating point op
+	FWritesFPSCR = UsesFPU | WritesFPSCR,
+
+	// Heh, not basic :P
+	ReadWritePC  = ReadsPC|WritesPC,     // Read and writes pc :P
+	WritesSRRWPC = WritesSR|ReadsPC|WritesPC,
+
+	// Branches (not delay slot):
+	Branch_dir   = ReadWritePC,          // Direct (eg , pc=r[xx]) -- this one is ReadWritePC b/c the delayslot may use pc ;)
+	Branch_rel   = ReadWritePC,          // Relative (rg pc+=10);
+
+	// Delay slot
+	Branch_dir_d = Delayslot|Branch_dir, // Direct (eg , pc=r[xx])
+	Branch_rel_d = Delayslot|Branch_rel, // Relative (rg pc+=10);
 };
+
+std::string disassemble_op(const char* tx1, u32 pc, u16 opcode);
+
 typedef void ( RecOpCallFP) (u32 op);
 struct sh4_opcodelistentry
 {
@@ -44,39 +62,50 @@ struct sh4_opcodelistentry
 	u8 IssueCycles;
 	u8 LatencyCycles;
 	sh4_eu unit;
-	sh4_exept_fixup ex_fixup;
+	u8 ex_type;
 	u64 decode;
-	u64 fallbacks;
-	void Dissasemble(char* strout,u32 pc , u16 params) const
+
+	void Disassemble(char* strout, u32 pc, u16 op) const
 	{
-		sprintf(strout,"%s:%08X:%04X",diss,pc,params);
+		const char *disOp = diss;
+		if (!strcmp(disOp, "missing"))
+		{
+			static char tmp[6];
+			snprintf(tmp, sizeof(tmp), "?%04X", op);
+			disOp = tmp;
+		}
+
+		std::string text = disassemble_op(disOp, pc, op);
+		strcpy(strout, text.c_str());
 	}
 
-	INLINE bool SetPC() const
+	bool SetPC() const
 	{
 		return (type & WritesPC)!=0;
 	}
 
-	INLINE bool NeedPC() const
+	bool NeedPC() const
 	{
 		return (type & ReadsPC)!=0;
 	}
 
-	INLINE bool SetSR() const
+	bool SetSR() const
 	{
 		return (type & WritesSR)!=0;
 	}
 
-	INLINE bool SetFPSCR() const
+	bool SetFPSCR() const
 	{
 		return (type & WritesFPSCR)!=0;
 	}
 
+	bool IsFloatingPoint() const
+	{
+		return (type & UsesFPU) != 0;
+	}
 };
 
 extern sh4_opcodelistentry* OpDesc[0x10000];
-extern sh4_opcodelistentry opcodes[];
-#define ExecuteOpcode(op) {OpPtr[op](op);}
 
 void DissasembleOpcode(u16 opcode,u32 pc,char* Dissasm);
 enum DecParam
@@ -146,4 +175,5 @@ enum DecMode
 	DM_MUL,
 	DM_DIV0,
 	DM_ADC,
+	DM_NEGC,
 };

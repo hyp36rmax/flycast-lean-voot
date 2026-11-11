@@ -1,84 +1,99 @@
-reicast
-===========
-reicast is a sega dreamcast emulator
+# Flycast
 
-This is developer oriented resource, if you just want bins head over to http://reicast.com
+[![Android CI](https://github.com/flyinghead/flycast/actions/workflows/android.yml/badge.svg)](https://github.com/flyinghead/flycast/actions/workflows/android.yml)
+[![C/C++ CI](https://github.com/flyinghead/flycast/actions/workflows/c-cpp.yml/badge.svg)](https://github.com/flyinghead/flycast/actions/workflows/c-cpp.yml)
+[![Nintendo Switch CI](https://github.com/flyinghead/flycast/actions/workflows/switch.yml/badge.svg)](https://github.com/flyinghead/flycast/actions/workflows/switch.yml)
+[![Windows UWP CI](https://github.com/flyinghead/flycast/actions/workflows/uwp.yml/badge.svg)](https://github.com/flyinghead/flycast/actions/workflows/uwp.yml)
+[![BSD CI](https://github.com/flyinghead/flycast/actions/workflows/bsd.yml/badge.svg)](https://github.com/flyinghead/flycast/actions/workflows/bsd.yml)
 
-Caution
--------
-The source is a mess, and I need sleep.
-We had to discover some interesting arm bugs on the cleaned/refactored branch right after the release.
-Expect a much improved changed folder/make structure soon.
+<img src="shell/linux/flycast.png" alt="flycast logo" width="150"/>
 
-Rebranding/forks
-----------------
-If you are interested into further porting/adapting/whatever, *please* don't fork off. I hate that. Really.
+**Flycast** is a multi-platform Sega Dreamcast, Naomi, Naomi 2, and Atomiswave emulator derived from [**reicast**](https://github.com/skmp/reicast-emulator).
 
-Let's try to keep everything under a single project :)
+Information about configuration and supported features can be found on [**TheArcadeStriker's flycast wiki**](https://github.com/TheArcadeStriker/flycast-wiki/wiki).
 
-To build for android
---------------------
-Tools required:
-* Latest Android SDK and NDK (duh)
-* Ant
+Join us on our [**Discord server**](https://discord.gg/X8YWP8w) for a chat.
 
-From project root directory:
+## Downloads ![android](https://flyinghead.github.io/flycast-builds/android.jpg) ![windows](https://flyinghead.github.io/flycast-builds/windows.png) ![linux](https://flyinghead.github.io/flycast-builds/ubuntu.png) ![apple](https://flyinghead.github.io/flycast-builds/apple.png) ![switch](https://flyinghead.github.io/flycast-builds/switch.png) ![xbox](https://flyinghead.github.io/flycast-builds/xbox.png)
+
+Get builds for your system from the [**builds page**](https://flyinghead.github.io/flycast-builds/) or [**GitHub Releases**](https://github.com/flyinghead/flycast/releases).
+
+- **Latest master builds:** regular builds from the `master` branch with recent fixes and updates.
+- **Nightly dev builds:** experimental builds with the latest features and changes.
+- **Stable tagged releases:** versioned release builds published on GitHub Releases.
+
+Automated test results are available from the builds page as well.
+
+## Install
+
+### Android ![android](https://flyinghead.github.io/flycast-builds/android.jpg)
+
+Install Flycast from [**Google Play**](https://play.google.com/store/apps/details?id=com.flycast.emulator).
+
+### Flatpak (Linux ![ubuntu logo](https://flyinghead.github.io/flycast-builds/ubuntu.png))
+
+1. [Set up Flatpak](https://www.flatpak.org/setup/).
+
+2. Install Flycast from [Flathub](https://flathub.org/apps/details/org.flycast.Flycast):
+
+`flatpak install -y org.flycast.Flycast`
+
+3. Run Flycast:
+
+`flatpak run org.flycast.Flycast`
+
+### Homebrew (macOS ![apple logo](https://flyinghead.github.io/flycast-builds/apple.png))
+
+1. [Set up Homebrew](https://brew.sh).
+
+2. Install Flycast via Homebrew:
+
+`brew install --cask flycast`
+
+### iOS
+
+Due to persistent harassment from an iOS user, support for this platform has been dropped.
+
+### Xbox One/Series ![xbox logo](https://flyinghead.github.io/flycast-builds/xbox.png)
+
+Grab the latest build from [**the builds page**](https://flyinghead.github.io/flycast-builds/), or the [**GitHub Actions**](https://github.com/flyinghead/flycast/actions/workflows/uwp.yml). Then install it using the **Xbox Device Portal**.
+
+## Build from source
+
+### macOS
+
+Right-click the bootstrap script and choose **Open**:
+
+`shell/apple/generate_xcode_project.command`
+
+### Windows
+
+Double-click the bootstrap script:
+
+`shell\windows\generate_vs_project.bat`
+
+### Linux
+
+#### Dependencies
+
+- **C/C++ compiler toolchain** (e.g. `gcc`/`g++`)
+- **CMake**
+- **make**
+- **libcurl** (development headers)
+- **libudev** (development headers)
+- **SDL2** (development headers)
+- **Graphics API**: Vulkan, OpenGL
+
+#### Build
+
 ```
-cd shell\android
-android update project -p .
-
-ndk-build -j 4
-
-ant debug
+$ git clone --recursive https://github.com/flyinghead/flycast.git
+$ cd flycast
+$ mkdir build && cd build
+$ cmake ..
+$ make
 ```
 
-Beta versions
--------------------
-Compiled test versions are available at recast.loungekatt.com
+## Packaging status
 
-Donations and stuff
--------------------
-Well, glad you liked the project so far!
-
-We're currently short on hardware
-
-If you would like to donate some devices, get in touch at team@reicast.com. GLES3 capable stuff, some mainstream hardware and rarities would be extremely appreciated.
-Keep in mind we're located in Greece for the most part
-
-This has been tested/developed on
-* Galaxy tab 7.0 Plus
-* LG P990
-* Archos 10G9
-* Some Chinese tablet
-* OUYA
-* Various development boards
-* gcw zero
-
-We had to buy all of these, except the gcw zero and a beaglebone which were donated (thanks! You rock!)
-
-Apart from that, we don't accept monetary donations right now.
-We also don't plan to be releasing a premium version at any store.
-Most of the project has been developed by drk||Raziel (aka, skmp, drk, Raz, etc) but it has been based on the 
-works of multiple people. It would be extremely unfair to charge for it and get all the credit :)
-
-
-We're planning for an indiegogo campaign later on to help with sustained development and running costs, so follow @reicastdc on twitter for updates
-
-
-Team
-----
-
-You can check the currently active committers on [the pretty graphs page](https://github.com/reicast/reicast-emulator/graphs/contributors)
-
-Chat on freenode #reicast. 
-
-The original reicast team consisted of drk||Raziel (mostly just writing code), PsyMan (debugging/testing and everything else) and a little bit of gb_away
-
-
-Special thanks
---------------
-In previous iterations a lot of people have worked on this, notably David Miller (aka, ZeZu), the nullDC team, friends from #pcsx2 and all over the world :)
-
-
-[![Bitdeli Badge](https://d2weczhvl823v0.cloudfront.net/reicast/reicast-emulator/trend.png)](https://bitdeli.com/free "Bitdeli Badge")
-
+[![Packaging status](https://repology.org/badge/vertical-allrepos/flycast.svg)](https://repology.org/project/flycast/versions)

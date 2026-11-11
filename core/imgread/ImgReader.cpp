@@ -1,85 +1,65 @@
-// nullGDR.cpp : Defines the entry point for the DLL application.
-//
-
-#include "ImgReader.h"
-//Get a copy of the operators for structs ... ugly , but works :)
 #include "common.h"
 
-void GetSessionInfo(u8* out,u8 ses);
+extern Disc* disc;
 
-void libGDR_ReadSubChannel(u8 * buff, u32 format, u32 len)
+u32 libGDR_GetTrackNumber(u32 sector, u32& elapsed)
 {
-	if (format==0)
+	if (disc != nullptr)
 	{
-		memcpy(buff,q_subchannel,len);
+		for (size_t i = 0; i < disc->tracks.size(); i++)
+			if (disc->tracks[i].StartFAD <= sector && (sector <= disc->tracks[i].EndFAD || disc->tracks[i].EndFAD == 0))
+			{
+				elapsed = sector - disc->tracks[i].StartFAD;
+				return i + 1;
+			}
 	}
+	elapsed = 0;
+	return 0xAA;
 }
 
-void libGDR_ReadSector(u8 * buff,u32 StartSector,u32 SectorCount,u32 secsz)
+bool libGDR_GetTrack(u32 track_num, u32& start_fad, u32& end_fad)
 {
-	GetDriveSector(buff,StartSector,SectorCount,secsz);
-	//if (CurrDrive)
-	//	CurrDrive->ReadSector(buff,StartSector,SectorCount,secsz);
+	if (track_num == 0 || disc == nullptr || track_num > disc->tracks.size())
+		return false;
+	start_fad = disc->tracks[track_num - 1].StartFAD;
+	end_fad = disc->tracks[track_num - 1].EndFAD;
+	if (end_fad == 0)
+	{
+		if (track_num == disc->tracks.size())
+			end_fad = disc->LeadOut.StartFAD - 1;
+		else
+			end_fad = disc->tracks[track_num].StartFAD - 1;
+	}
+
+	return true;
 }
 
-void libGDR_GetToc(u32* toc,u32 area)
+std::string libGDR_GetDiskCatalog()
 {
-	GetDriveToc(toc,(DiskArea)area);
-}
-//TODO : fix up
-u32 libGDR_GetDiscType()
-{
-	if (disc)
-		return disc->type;
+	if (disc != nullptr)
+		return disc->catalog;
 	else
-		return NullDriveDiscType;
+		return "";
 }
 
-void libGDR_GetSessionInfo(u8* out,u8 ses)
+std::string libGDR_GetTrackIsrc(u32 trackNum)
 {
-	GetDriveSessionInfo(out,ses);
-}
-/*
-void EXPORT_CALL handle_SwitchDisc(u32 id,void* w,void* p)
-{
-	//msgboxf("This feature is not yet implemented",MB_ICONWARNING);
-	//return;
-	TermDrive();
-	
-	NullDriveDiscType=Busy;
-	DriveNotifyEvent(DiskChange,0);
-	Sleep(150);	//busy for a bit
-
-	NullDriveDiscType=Open;
-	DriveNotifyEvent(DiskChange,0);
-	Sleep(150); //tray is open
-
-	while(!InitDrive(2))//no "cancel"
-		msgboxf("Init Drive failed, disc must be valid for swap",0x00000010L);
-
-	DriveNotifyEvent(DiskChange,0);
-	//new disc is in
-}
-*/
-//It's supposed to reset everything (if not a manual reset)
-void libGDR_Reset(bool Manual)
-{
-	libCore_gdrom_disc_change();
+	if (trackNum == 0 || disc == nullptr || trackNum > disc->tracks.size())
+		return "";
+	return disc->tracks[trackNum - 1].isrc;
 }
 
-//called when entering sh4 thread , from the new thread context (for any thread specific init)
-s32 libGDR_Init()
+void libGDR_GetTrackAdrAndControl(u32 trackNum, u8& adr, u8& ctrl)
 {
-	if (!InitDrive())
-		return rv_serror;
-	libCore_gdrom_disc_change();
-	LoadSettings();
-	settings.imgread.PatchRegion=true;
-	return rv_ok;
-}
-
-//called when exiting from sh4 thread , from the new thread context (for any thread specific init) :P
-void libGDR_Term()
-{
-	TermDrive();
+	if (trackNum == 0 || disc == nullptr || trackNum > disc->tracks.size())
+	{
+		adr = 0;
+		ctrl = 0;
+	}
+	else
+	{
+		const Track& track = disc->tracks[trackNum - 1];
+		adr = track.ADR | !track.isDataTrack();	// Force subcode Q data type 1 for audio tracks
+		ctrl = track.CTRL;
+	}
 }

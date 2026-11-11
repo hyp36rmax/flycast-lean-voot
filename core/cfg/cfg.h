@@ -1,20 +1,31 @@
 #pragma once
+#include <stdint.h>
+#include <string>
+#include <vector>
 
-#include "types.h"
+namespace config
+{
 
-/*
-**	cfg* prototypes, if you pass NULL to a cfgSave* it will wipe out the section
-**	} if you pass it to lpKey it will wipe out that particular entry
-**	} if you add write to something it will create it if its not present
-**	} ** Strings passed to LoadStr should be MAX_PATH in size ! **
-*/
+bool open();
+int loadInt(const std::string& section, const std::string& key, int def = 0);
+void saveInt(const std::string& section, const std::string& key, int value);
+int64_t loadInt64(const std::string& section, const std::string& key, int64_t def = 0);
+void saveInt64(const std::string& section, const std::string& key, int64_t value);
+std::string loadStr(const std::string& section, const std::string& key, const std::string& def = {});
+void saveStr(const std::string& section, const std::string& key, const std::string& value);
+bool loadBool(const std::string& section, const std::string& key, bool def = false);
+void saveBool(const std::string& section, const std::string& key, bool value);
+float loadFloat(const std::string& section, const std::string& key, float def = 0.f);
+void saveFloat(const std::string& section, const std::string& key, float value);
+void setTransient(const std::string& section, const std::string& key, const std::string& value);
+bool isTransient(const std::string& section, const std::string& key);
 
-bool cfgOpen();
-s32   cfgLoadInt(const wchar * lpSection, const wchar * lpKey,s32 Default);
-void  cfgSaveInt(const wchar * lpSection, const wchar * lpKey, s32 Int);
-void  cfgLoadStr(const wchar * lpSection, const wchar * lpKey, wchar * lpReturn,const wchar* lpDefault);
-void  cfgSaveStr(const wchar * lpSection, const wchar * lpKey, const wchar * lpString);
-s32  cfgExists(const wchar * Section, const wchar * Key);
-void cfgSetVitual(const wchar * lpSection, const wchar * lpKey, const wchar * lpString);
+void parseCommandLine(int argc, const char * const argv[]);
 
-bool ParseCommandLine(int argc,wchar* argv[]);
+void setAutoSave(bool autoSave);
+bool hasSection(const std::string& section);
+void deleteSection(const std::string& section);
+void deleteEntry(const std::string& section, const std::string& key);
+
+std::vector<std::string> getEntries(const std::string& section);
+}

@@ -1,184 +1,132 @@
 #include "types.h"
-#include "cfg/cfg.h"
 
-#if HOST_OS==OS_LINUX
-#include <poll.h>
-#include <termios.h>
-//#include <curses.h>
-#include <fcntl.h>
-#include <semaphore.h>
-#include <stdarg.h>
-#include <signal.h>
-#include <sys/param.h>
-#include <sys/mman.h>
+#if defined(__unix__) || defined(__APPLE__) || defined(__SWITCH__) || defined(__HAIKU__)
+#if defined(__APPLE__)
+	#define _XOPEN_SOURCE 1
+	#define __USE_GNU 1
+	#include <TargetConditionals.h>
+#endif
+#include <csignal>
 #include <sys/time.h>
+#if defined(__linux__) && !defined(__ANDROID__)
+  #include <sys/personality.h>
+#endif
 #include <unistd.h>
-#include "hw/sh4/dyna/blockmanager.h"
-
-#if defined(_ANDROID)
-#include <asm/sigcontext.h>
-typedef struct ucontext_t {
-unsigned long uc_flags;
-struct ucontext_t *uc_link;
-struct {
-void *p;
-int flags;
-size_t size;
-} sstack_data;
-struct sigcontext uc_mcontext;
-/* some 2.6.x kernel has fp data here after a few other fields
-* we don't use them for now...
-*/
-} ucontext_t;
+#ifdef __linux__
+#include <pthread.h>
 #endif
 
-#if HOST_CPU == CPU_ARM
-#define GET_PC_FROM_CONTEXT(c) (((ucontext_t *)(c))->uc_mcontext.arm_pc)
-#else
-#define GET_PC_FROM_CONTEXT(c) (((ucontext_t *)(c))->uc_mcontext.pc)
-#endif
+#include "oslib/host_context.h"
 
 #include "hw/sh4/dyna/ngen.h"
+#include "rend/TexCache.h"
+#include "hw/mem/addrspace.h"
+#include "hw/mem/mem_watch.h"
+#include "emulator.h"
 
-u32* ngen_readm_fail_v2(u32* ptr,u32* regs,u32 saddr);
-bool VramLockedWrite(u8* address);
-bool BM_LockedWrite(u8* address);
+#ifdef __SWITCH__
+#include <ucontext.h>
+extern "C" char __start__;
+#define siginfo_t switch_siginfo_t
+#endif // __SWITCH__
 
-void fault_handler (int sn, siginfo_t * si, void *ctxr)
-{
-	bool dyna_cde=((u32)GET_PC_FROM_CONTEXT(ctxr)>(u32)CodeCache) && ((u32)GET_PC_FROM_CONTEXT(ctxr)<(u32)(CodeCache+CODE_SIZE));
+void context_from_segfault(host_context_t* hctx, void* segfault_ctx);
+void context_to_segfault(host_context_t* hctx, void* segfault_ctx);
 
-	ucontext_t* ctx=(ucontext_t*)ctxr;
-	//printf("mprot hit @ ptr 0x%08X @@ code: %08X, %d\n",si->si_addr,ctx->uc_mcontext.arm_pc,dyna_cde);
-
-	
-	if (VramLockedWrite((u8*)si->si_addr) || BM_LockedWrite((u8*)si->si_addr))
-		return;
-#ifndef HOST_NO_REC
-	else if (dyna_cde)
-	{
-		GET_PC_FROM_CONTEXT(ctxr)=(u32)ngen_readm_fail_v2((u32*)GET_PC_FROM_CONTEXT(ctxr),(u32*)&(ctx->uc_mcontext.arm_r0),(unat)si->si_addr);
-	}
+#ifndef __SWITCH__
+static struct sigaction next_segv_handler;
 #endif
-	else
-	{
-		printf("SIGSEGV @ fault_handler+0x%08X ... %08X -> was not in vram\n",GET_PC_FROM_CONTEXT(ctxr)-(u32)fault_handler,si->si_addr);
-		die("segfault");
-//		asm volatile("bkpt 0x0001\n\t");
-		signal(SIGSEGV, SIG_DFL);
-	}
-}
+#if defined(__APPLE__)
+static struct sigaction next_bus_handler;
+#endif
 
-void install_fault_handler (void)
+void fault_handler(int sn, siginfo_t * si, void *segfault_ctx)
 {
-	struct sigaction act, segv_oact;
+	// Ram watcher for net rollback
+	if (memwatch::writeAccess(si->si_addr))
+		return;
+	// code protection in RAM
+	if (bm_RamWriteAccess(si->si_addr))
+		return;
+	// texture protection in VRAM
+	if (VramLockedWrite((u8*)si->si_addr))
+		return;
+#if FEAT_SHREC == DYNAREC_JIT
+	// FPCB jump table protection
+	if (addrspace::bm_lockedWrite((u8*)si->si_addr))
+		return;
+
+	// fast mem access rewriting
+	host_context_t ctx;
+	context_from_segfault(&ctx, segfault_ctx);
+	if (sh4Dynarec->rewrite(ctx, si->si_addr))
+	{
+		context_to_segfault(&ctx, segfault_ctx);
+		return;
+	}
+
+	ERROR_LOG(COMMON, "SIGSEGV @ %p invalid access to %p", (void *)ctx.pc, si->si_addr);
+#endif
+
+#ifdef __SWITCH__
+	MemoryInfo meminfo;
+	u32 pageinfo;
+	svcQueryMemory(&meminfo, &pageinfo, (u64)&__start__);
+	ERROR_LOG(COMMON, ".text base: %p -> offset: %lx", (void*)meminfo.addr, ctx.pc - meminfo.addr);
+#else
+	if (next_segv_handler.sa_sigaction != nullptr)
+		next_segv_handler.sa_sigaction(sn, si, segfault_ctx);
+	else
+#endif // !__SWITCH__
+		die("segfault");
+}
+#undef HOST_CTX_READY
+
+void os_InstallFaultHandler()
+{
+#ifndef __SWITCH__
+	struct sigaction act;
 	memset(&act, 0, sizeof(act));
+	act.sa_handler = SIG_IGN;
+	sigaction(SIGPIPE, &act, nullptr);
+
 	act.sa_sigaction = fault_handler;
 	sigemptyset(&act.sa_mask);
 	act.sa_flags = SA_SIGINFO;
-	sigaction(SIGSEGV, &act, &segv_oact);
+	sigaction(SIGSEGV, &act, &next_segv_handler);
+#endif
+#if defined(__APPLE__)
+    //this is broken on osx/ios/mach in general
+    sigaction(SIGBUS, &act, &next_bus_handler);
+#endif
 }
 
-
-//Thread class
-cThread::cThread(ThreadEntryFP* function,void* prm)
+void os_UninstallFaultHandler()
 {
-	Entry=function;
-	param=prm;
+#ifndef __SWITCH__
+	sigaction(SIGSEGV, &next_segv_handler, nullptr);
+#endif
+#if defined(__APPLE__)
+	sigaction(SIGBUS, &next_bus_handler, nullptr);
+#endif
 }
 
-void cThread::Start()
+#if !defined(__unix__) && !defined(LIBRETRO) && !defined(__SWITCH__) && !defined(__HAIKU__)
+[[noreturn]] void os_DebugBreak()
 {
-		pthread_create( (pthread_t*)&hThread, NULL, Entry, param);
+	__builtin_trap();
 }
+#endif
 
-void cThread::WaitToEnd()
+// RunFast mode is the combination of the following conditions:
+// * the VFP11 coprocessor is in flush-to-zero mode
+// * the VFP11 coprocessor is in default NaN mode
+// * all exception enable bits are cleared.
+static void enable_runfast()
 {
-	pthread_join((pthread_t)hThread,0);
-}
-
-//End thread class
-
-//cResetEvent Calss
-cResetEvent::cResetEvent(bool State,bool Auto)
-{
-	//sem_init((sem_t*)hEvent, 0, State?1:0);
-	verify(State==false&&Auto==true);
-	mutx = PTHREAD_MUTEX_INITIALIZER;
-	cond = PTHREAD_COND_INITIALIZER;
-}
-cResetEvent::~cResetEvent()
-{
-	//Destroy the event object ?
-
-}
-void cResetEvent::Set()//Signal
-{
-	pthread_mutex_lock( &mutx );
-	state=true;
-    pthread_cond_signal( &cond);
-	pthread_mutex_unlock( &mutx );
-}
-void cResetEvent::Reset()//reset
-{
-	pthread_mutex_lock( &mutx );
-	state=false;
-	pthread_mutex_unlock( &mutx );
-}
-void cResetEvent::Wait(u32 msec)//Wait for signal , then reset
-{
-	verify(false);
-}
-void cResetEvent::Wait()//Wait for signal , then reset
-{
-	pthread_mutex_lock( &mutx );
-	if (!state)
-	{
-		pthread_cond_wait( &cond, &mutx );
-	}
-	state=false;
-	pthread_mutex_unlock( &mutx );
-}
-
-//End AutoResetEvent
-
-#include <errno.h>
-
-void VArray2::LockRegion(u32 offset,u32 size)
-{
-  u32 inpage=offset & PAGE_MASK;
-	u32 rv=mprotect (data+offset-inpage, size+inpage, PROT_READ );
-	if (rv!=0)
-	{
-		printf("mprotect(%08X,%08X,R) failed: %d | %d\n",data+offset-inpage,size+inpage,rv,errno);
-		die("mprotect  failed ..\n");
-	}
-}
-
-void VArray2::UnLockRegion(u32 offset,u32 size)
-{
-  u32 inpage=offset & PAGE_MASK;
-	u32 rv=mprotect (data+offset-inpage, size+inpage, PROT_READ | PROT_WRITE);
-	if (rv!=0)
-	{
-		printf("mprotect(%08X,%08X,RW) failed: %d | %d\n",data+offset-inpage,size+inpage,rv,errno);
-		die("mprotect  failed ..\n");
-	}
-}
-double os_GetSeconds()
-{
-	timeval a;
-	gettimeofday (&a,0);
-	static u64 tvs_base=a.tv_sec;
-	return a.tv_sec-tvs_base+a.tv_usec/1000000.0;
-}
-
-
-void enable_runfast()
-{
-	#if HOST_CPU==CPU_ARM && !defined(ARMCC)
-	static const unsigned int x = 0x04086060;
-	static const unsigned int y = 0x03000000;
+#if HOST_CPU == CPU_ARM && !defined(ARMCC)
+	static const unsigned int x = 0x04086060;	// reset and disable FP exceptions, flush-to-zero, default NaN mode
+	static const unsigned int y = 0x03000000;	// round to zero
 	int r;
 	asm volatile (
 		"fmrx	%0, fpscr			\n\t"	//r0 = FPSCR
@@ -189,19 +137,59 @@ void enable_runfast()
 		: "r"(x), "r"(y)
 	);
 
-	printf("ARM VFP-Run Fast (NFP) enabled !\n");
-	#endif
+	DEBUG_LOG(BOOT, "ARM VFP-Run Fast (NFP) enabled !");
+#endif
 }
+
+// Some old CPUs lack the NX (no exec) flag so READ_IMPLIES_EXEC is set by default on these platforms.
+// However resetting the flag isn't going to magically change the way the CPU works. So I wonder how useful this is.
+// It's not needed on modern 64-bit architectures anyway.
+static void linux_fix_personality()
+{
+#if defined(__linux__) && !defined(__ANDROID__) && (HOST_CPU == CPU_X86 || HOST_CPU == CPU_ARM)
+	DEBUG_LOG(BOOT, "Personality: %08X", personality(0xFFFFFFFF));
+	personality(~READ_IMPLIES_EXEC & personality(0xFFFFFFFF));
+	DEBUG_LOG(BOOT, "Updated personality: %08X", personality(0xFFFFFFFF));
+#endif
+}
+
+#if defined(__unix__) && !defined(LIBRETRO) && !defined(__ANDROID__)
+static void sigintHandler(int)
+{
+	dc_exit();
+}
+#endif
 
 void common_linux_setup()
 {
+	linux_fix_personality();
+
 	enable_runfast();
-	install_fault_handler();
-	signal(SIGINT, exit);
+	os_InstallFaultHandler();
+#if defined(__unix__) && !defined(LIBRETRO) && !defined(__ANDROID__)
+	// exit cleanly on ^C
+	signal(SIGINT, sigintHandler);
+#endif
 	
-	settings.profile.run_counts=0;
-	
-	printf("Linux paging: %08X %08X %08X\n",sysconf(_SC_PAGESIZE),PAGE_SIZE,PAGE_MASK);
+	DEBUG_LOG(BOOT, "Linux paging: sysconf %ld PAGE_SIZE %ld PAGE_MASK %lX", sysconf(_SC_PAGESIZE), (unsigned long)PAGE_SIZE, (long)PAGE_MASK);
 	verify(PAGE_MASK==(sysconf(_SC_PAGESIZE)-1));
 }
+
+#ifndef __APPLE__
+
+void os_SetThreadName(const char *name)
+{
+#ifdef __linux__
+	if (strlen(name) > 16)
+	{
+		static char tmp[17];
+		strncpy(tmp, name, 16);
+		name = tmp;
+	}
+	pthread_setname_np(pthread_self(), name);
 #endif
+}
+
+#endif
+
+#endif	// __unix__ or __APPLE__ or __SWITCH__

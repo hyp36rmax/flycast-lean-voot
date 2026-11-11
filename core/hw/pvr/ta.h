@@ -1,32 +1,34 @@
 #pragma once
-#include "drkPvr.h"
-#include "hw/holly/holly_intc.h"
+#include "types.h"
+#include "ta_ctx.h"
 #include "hw/sh4/sh4_if.h"
-#include "oslib/oslib.h"
-#include "ta_structs.h"
+
+constexpr u32 SZ32 = 1;
+constexpr u32 SZ64 = 2;
 
 struct TA_context;
 
-void ta_init();
-void ta_reset();
-void ta_term();
-
-
-void ta_vtx_ListCont();
-void ta_vtx_ListInit();
+void ta_vtx_ListInit(bool continuation);
 void ta_vtx_SoftReset();
 
-void DYNACALL ta_vtx_data32(void* data);
-void ta_vtx_data(u32* data, u32 size);
+void DYNACALL ta_vtx_data32(const SQBuffer *data);
+void ta_vtx_data(const SQBuffer *data, u32 size);
 
-bool ta_parse_vdrc(TA_context* ctx);
+void ta_parse(TA_context *ctx, bool primRestart);
 
+class TaTypeLut
+{
+public:
+	static constexpr u32 INVALID_TYPE = 0xFFFFFFFF;
 
-#define STRIPS_AS_PPARAMS 1
-#define TRIG_SORT 1
+	static const TaTypeLut& instance() {
+		static TaTypeLut _instance;
+		return _instance;
+	}
+	u32 table[256];
 
-
-#if TRIG_SORT 
-#undef STRIPS_AS_PPARAMS
-#define STRIPS_AS_PPARAMS 1
-#endif
+private:
+	TaTypeLut();
+	u32 poly_data_type_id(PCW pcw);
+	u32 poly_header_type_size(PCW pcw);
+};

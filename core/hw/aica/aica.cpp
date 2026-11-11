@@ -1,43 +1,43 @@
 #include "aica.h"
-#include "sgc_if.h"
+#include "aica_if.h"
 #include "aica_mem.h"
-#include <math.h>
+#include "sgc_if.h"
 #include "hw/holly/holly_intc.h"
 #include "hw/holly/sb.h"
+#include "hw/sh4/sh4_sched.h"
+#include "hw/arm7/arm7.h"
+#include "hw/arm7/arm_mem.h"
 
-#define SH4_IRQ_BIT (1<<(holly_SPU_IRQ&255))
+namespace aica
+{
 
-CommonData_struct* CommonData;
-DSPData_struct* DSPData;
-InterruptInfo* MCIEB;
-InterruptInfo* MCIPD;
-InterruptInfo* MCIRE;
-InterruptInfo* SCIEB;
-InterruptInfo* SCIPD;
-InterruptInfo* SCIRE;
+#define SH4_IRQ_BIT (1 << (holly_SPU_IRQ & 31))
+
+std::deque<u8> midiSendBuffer;
 
 //Interrupts
 //arm side
-u32 GetL(u32 witch)
+static u32 GetL(u32 which)
 {
-	if (witch>7)
-		witch=7; //higher bits share bit 7
+	if (which > 7)
+		which = 7; //higher bits share bit 7
 
-	u32 bit=1<<witch;
-	u32 rv=0;
+	u32 bit = 1 << which;
+	u32 rv = 0;
 
 	if (CommonData->SCILV0 & bit)
-		rv=1;
+		rv = 1;
 
 	if (CommonData->SCILV1 & bit)
-		rv|=2;
+		rv |= 2;
 	
 	if (CommonData->SCILV2 & bit)
-		rv|=4;
+		rv |= 4;
 
 	return rv;
 }
-void update_arm_interrupts()
+
+static void update_arm_interrupts()
 {
 	u32 p_ints=SCIEB->full & SCIPD->full;
 
@@ -58,227 +58,226 @@ void update_arm_interrupts()
 		}
 	}
 
-	libARM_InterruptChange(p_ints,Lval);
+	arm::interruptChange(p_ints,Lval);
 }
 
 //sh4 side
-void UpdateSh4Ints()
+static bool UpdateSh4Ints()
 {
 	u32 p_ints = MCIEB->full & MCIPD->full;
 	if (p_ints)
 	{
-		if ((SB_ISTEXT & SH4_IRQ_BIT )==0)
-		{
-			//if no interrupt is already pending then raise one :)
+		if ((SB_ISTEXT & SH4_IRQ_BIT) == 0)
+			// if no interrupt is already pending then raise one
 			asic_RaiseInterrupt(holly_SPU_IRQ);
-		}
+		return true;
 	}
 	else
 	{
-		if (SB_ISTEXT&SH4_IRQ_BIT)
-		{
+		if ((SB_ISTEXT & SH4_IRQ_BIT) != 0)
 			asic_CancelInterrupt(holly_SPU_IRQ);
-		}
+		return false;
 	}
-
 }
-
-////
-//Timers :)
-struct AicaTimerData
-{
-	union
-	{
-		struct 
-		{
-			u32 count:8;
-			u32 md:3;
-			u32 nil:5;
-			u32 pad:16;
-		};
-		u32 data;
-	};
-};
-class AicaTimer
-{
-public:
-	AicaTimerData* data;
-	s32 c_step;
-	u32 m_step;
-	u32 id;
-	void Init(u8* regbase,u32 timer)
-	{
-		data=(AicaTimerData*)&regbase[0x2890 + timer*4];
-		id=timer;
-		m_step=1<<(data->md);
-		c_step=m_step;
-	}
-	void StepTimer(u32 samples)
-	{
-		do
-		{
-			c_step--;
-			if (c_step==0)
-			{
-				c_step=m_step;
-				data->count++;
-				if (data->count==0)
-				{
-					if (id==0)
-					{
-						SCIPD->TimerA=1;
-						MCIPD->TimerA=1;
-					}
-					else if (id==1)
-					{
-						SCIPD->TimerB=1;
-						MCIPD->TimerB=1;
-					}
-					else
-					{
-						SCIPD->TimerC=1;
-						MCIPD->TimerC=1;
-					}
-				}
-			}
-		} while(--samples);
-	}
-
-	void RegisterWrite()
-	{
-		u32 n_step=1<<(data->md);
-		if (n_step!=m_step)
-		{
-			m_step=n_step;
-			c_step=m_step;
-		}
-	}
-};
 
 AicaTimer timers[3];
-//Mainloop
-void libAICA_Update(u32 Samples)
+int aica_schid = -1;
+constexpr int AICA_TICK = 4535;		// 44.1 KHz
+
+static int AicaUpdate(int tag, int cycles, int jitter, void *arg)
 {
-	AICA_Sample32();
+	arm::run(1);
+
+	return AICA_TICK;
 }
 
-void libAICA_TimeStep()
+//Mainloop
+
+void timeStep()
 {
-	for (int i=0;i<3;i++)
-		timers[i].StepTimer(1);
+	for (auto& timer : timers)
+		timer.StepTimer(1);
 
-	SCIPD->SAMPLE_DONE=1;
+	SCIPD->SAMPLE_DONE = 1;
+	MCIPD->SAMPLE_DONE = 1;
 
-	if (settings.aica.NoBatch)
-		AICA_Sample();
+	sgc::AICA_Sample();
 
-	//Make sure sh4/arm interrupt system is up to date :)
+	//Make sure sh4/arm interrupt system is up to date
 	update_arm_interrupts();
 	UpdateSh4Ints();	
 }
 
+static void AicaInternalDMA()
+{
+	if (!CommonData->DEXE)
+		return;
+
+	// Start dma
+	DEBUG_LOG(AICA, "AICA internal DMA: DGATE %d DDIR %d DLG %x", CommonData->DGATE, CommonData->DDIR, CommonData->DLG);
+	if (CommonData->DGATE)
+	{
+		// Clear memory/registers
+		if (CommonData->DDIR)
+		{
+			// to wave mem
+			u32 addr = ((CommonData->DMEA_hi << 16) | (CommonData->DMEA_lo << 2)) & ARAM_MASK;
+			u32 len = std::min(CommonData->DLG, ARAM_SIZE - addr);
+			memset(&aica_ram[addr], 0, len * 4);
+		}
+		else
+		{
+			// to regs
+			u32 addr = CommonData->DRGA << 2;
+			for (u32 i = 0; i < CommonData->DLG; i++, addr += 4)
+				writeAicaReg(addr, (u32)0);
+		}
+	}
+	else
+	{
+		// Data xfer
+		u32 waddr = ((CommonData->DMEA_hi << 16) | (CommonData->DMEA_lo << 2)) & ARAM_MASK;
+		u32 raddr = CommonData->DRGA << 2;
+		u32 len = std::min(CommonData->DLG, ARAM_SIZE - waddr);
+		if (CommonData->DDIR)
+		{
+			// reg to wave mem
+			for (u32 i = 0; i < len; i++, waddr += 4, raddr += 4)
+				*(u32*)&aica_ram[waddr] = readAicaReg<u32>(raddr);
+		}
+		else
+		{
+			// wave mem to regs
+			for (u32 i = 0; i < len; i++, waddr += 4, raddr += 4)
+				writeAicaReg(raddr, *(u32*)&aica_ram[waddr]);
+		}
+	}
+	CommonData->DEXE = 0;
+	MCIPD->DMA_END = 1;
+	UpdateSh4Ints();
+	SCIPD->DMA_END = 1;
+	update_arm_interrupts();
+}
+
 //Memory i/o
-template<u32 sz>
-void WriteAicaReg(u32 reg,u32 data)
+template<typename T>
+void writeTimerAndIntReg(u32 reg, T data)
 {
 	switch (reg)
 	{
+	case SCIEB_addr:
+		SCIEB->full = data & 0x7ff;
+		update_arm_interrupts();
+		break;
+
 	case SCIPD_addr:
-		verify(sz!=1);
-		if (data & (1<<5))
+		// other bits are read-only
+		if (data & (1 << 5))
 		{
-			SCIPD->SCPU=1;
+			SCIPD->SCPU = 1;
 			update_arm_interrupts();
 		}
-		//Read only
-		return;
+		break;
 
 	case SCIRE_addr:
-		{
-			verify(sz!=1);
-			SCIPD->full&=~(data /*& SCIEB->full*/ );	//is the & SCIEB->full needed ? doesn't seem like it
-			data=0;//Write only
-			update_arm_interrupts();
-		}
+		SCIPD->full &= ~data;
+		update_arm_interrupts();
+		break;
+
+	case MCIEB_addr:
+		MCIEB->full = data & 0x7ff;
+		if (UpdateSh4Ints())
+			arm::avoidRaceCondition();
 		break;
 
 	case MCIPD_addr:
-		if (data & (1<<5))
+		// other bits are read-only
+		if (data & (1 << 5))
 		{
-			verify(sz!=1);
-			MCIPD->SCPU=1;
-			UpdateSh4Ints();
-		}
-		//Read only
-		return;
-
-	case MCIRE_addr:
-		{
-			verify(sz!=1);
-			MCIPD->full&=~data;
-			UpdateSh4Ints();
-			//Write only
+			MCIPD->SCPU = 1;
+			if (UpdateSh4Ints())
+				arm::avoidRaceCondition();
 		}
 		break;
 
+	case MCIRE_addr:
+		MCIPD->full &= ~data;
+		UpdateSh4Ints();
+		break;
+
 	case TIMER_A:
-		WriteMemArr(aica_reg,reg,data,sz);
+		WriteMemArr(aica_reg, reg, data);
 		timers[0].RegisterWrite();
 		break;
 
 	case TIMER_B:
-		WriteMemArr(aica_reg,reg,data,sz);
+		WriteMemArr(aica_reg, reg, data);
 		timers[1].RegisterWrite();
 		break;
 
 	case TIMER_C:
-		WriteMemArr(aica_reg,reg,data,sz);
+		WriteMemArr(aica_reg, reg, data);
 		timers[2].RegisterWrite();
 		break;
 
+	// DEXE, DDIR, DLG
+	case 0x288C:
+		WriteMemArr(aica_reg, reg, data);
+		AicaInternalDMA();
+		break;
+
 	default:
-		WriteMemArr(aica_reg,reg,data,sz);
+		WriteMemArr(aica_reg, reg, data);
 		break;
 	}
 }
 
+template void writeTimerAndIntReg<>(u32 reg, u8 data);
+template void writeTimerAndIntReg<>(u32 reg, u16 data);
+template void writeTimerAndIntReg<>(u32 reg, u32 data);
 
-
-template void WriteAicaReg<1>(u32 reg,u32 data);
-template void WriteAicaReg<2>(u32 reg,u32 data);
-
-//misc :p
-s32 libAICA_Init()
+void midiSend(u8 data)
 {
-	init_mem();
-
-	verify(sizeof(*CommonData)==0x508);
-	verify(sizeof(*DSPData)==0x15C8);
-
-	CommonData=(CommonData_struct*)&aica_reg[0x2800];
-	DSPData=(DSPData_struct*)&aica_reg[0x3000];
-	//slave cpu (arm7)
-
-	SCIEB=(InterruptInfo*)&aica_reg[0x289C];
-	SCIPD=(InterruptInfo*)&aica_reg[0x289C+4];
-	SCIRE=(InterruptInfo*)&aica_reg[0x289C+8];
-	//Main cpu (sh4)
-	MCIEB=(InterruptInfo*)&aica_reg[0x28B4];
-	MCIPD=(InterruptInfo*)&aica_reg[0x28B4+4];
-	MCIRE=(InterruptInfo*)&aica_reg[0x28B4+8];
-
-	sgc_Init();
-	for (int i=0;i<3;i++)
-		timers[i].Init(aica_reg,i);
-
-	return rv_ok;
+	midiSendBuffer.push_back(data);
+	SCIPD->MIDI_IN = 1;
+	update_arm_interrupts();
+	MCIPD->MIDI_IN = 1;
+	UpdateSh4Ints();
 }
 
-void libAICA_Reset(bool m)
+void init()
 {
+	initMem();
+	initRtc();
+
+	sgc::init();
+	if (aica_schid == -1)
+		aica_schid = sh4_sched_register(0, &AicaUpdate);
+	arm::init();
 }
 
-void libAICA_Term()
+void reset(bool hard)
 {
-	sgc_Term();
+	if (hard)
+	{
+		initMem();
+		sgc::term();
+		sgc::init();
+		sh4_sched_request(aica_schid, AICA_TICK);
+	}
+	for (std::size_t i = 0; i < std::size(timers); i++)
+		timers[i].Init(aica_reg, i);
+	resetRtc(hard);
+	arm::reset();
 }
+
+void term()
+{
+	arm::term();
+	sgc::term();
+	termMem();
+	sh4_sched_unregister(aica_schid);
+	aica_schid = -1;
+}
+
+} // namespace aica

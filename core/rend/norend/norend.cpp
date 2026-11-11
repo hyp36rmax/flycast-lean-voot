@@ -1,27 +1,29 @@
-
+#include "hw/pvr/ta.h"
+#include "hw/pvr/ta_ctx.h"
 #include "hw/pvr/Renderer_if.h"
-#include "oslib/oslib.h"
-
-void rend_set_fb_scale(float x,float y) { }
-void rend_text_invl(vram_block* bl) { }
 
 struct norend : Renderer
 {
-	bool Init()
-	{
+	bool Init() override {
 		return true;
 	}
+	void Term() override { }
 
-	void Resize(int w, int h) { }
-	void Term() { }
-
-	bool Render()
-	{
-		return !pvrrc.isRTT;
+	void Process(TA_context* ctx) override {
+		rendContext = &ctx->rend;
+		ta_parse(ctx, true);
 	}
 
-	void Present() { }
+	bool Render() override {
+		return !rendContext->isRTT;
+	}
+	void RenderFramebuffer(const FramebufferInfo& info) override {
+		rendContext = nullptr;
+	}
+
+	rend_context *rendContext;
 };
 
-
-Renderer* rend_norend() { return new norend(); }
+Renderer *rend_norend() {
+	return new norend();
+}

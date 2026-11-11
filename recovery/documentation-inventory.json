@@ -1,0 +1,117 @@
+{
+  "status": "PENDING IMPORT",
+  "available": [
+    {
+      "source": "RELEASE01-R1-FIX02-evidence/Documentation-Recovery-Inventory.txt",
+      "sha256": "c630ae42c93d389bbee14b364e836e16e7fdd98b6e6275097e468bd1fd11bf9d",
+      "bytes": 1894,
+      "classification": "retained historical evidence; approved V1.0 import pending"
+    },
+    {
+      "source": "RELEASE01-R1-FIX02-evidence/docs/performance/METHODOLOGY.md",
+      "sha256": "d5d047e5afd9771da9cec06dbaa10542d6e5eea968ef69fc386959af85d42e61",
+      "bytes": 5592,
+      "classification": "retained historical evidence; approved V1.0 import pending"
+    },
+    {
+      "source": "RELEASE01-R1-FIX03-evidence/Documentation-Import/V1.0/IMPORT-CHECKLIST.txt",
+      "sha256": "b51408fd0d881e67babe0f17730a6ef4d688849925247b4e8667213727b90844",
+      "bytes": 1471,
+      "classification": "retained historical evidence; approved V1.0 import pending"
+    },
+    {
+      "source": "UX04-R2-evidence/Experience/docs/FlycastLeanRnDJourneyV1.2.md",
+      "sha256": "b20c3b5acdd5f1ded491f584b8f053ee84107b6457da489c8e7d83bd32c36407",
+      "bytes": 7763,
+      "classification": "retained historical evidence; approved V1.0 import pending"
+    },
+    {
+      "source": "UX04-R2-evidence/Experience/docs/FlycastLeanEngineeringTechnicalPulseV1.2.md",
+      "sha256": "4b589a9a70a92d6c5ecf806d6814154121e1e77c21debf07e10e384bf9ec92c4",
+      "bytes": 10887,
+      "classification": "retained historical evidence; approved V1.0 import pending"
+    },
+    {
+      "source": "UX04-R2-evidence/Experience/docs/FlycastLeanIntegration20261101.txt",
+      "sha256": "79bd2b110f7031f871dd94fa172c4853cd81c2191405e45108721726033b2c08",
+      "bytes": 4390,
+      "classification": "retained historical evidence; approved V1.0 import pending"
+    },
+    {
+      "source": "runtime/LICENSE",
+      "sha256": "189b1af95d661151e054cea10c91b3d754e4de4d3fecfb074c1fb29476f7167b",
+      "bytes": 18431,
+      "classification": "existing source-controlled document"
+    },
+    {
+      "source": "runtime/README.md",
+      "sha256": "6009c9d26bbb09b288a297d46ab812414ed86927634627a7f2928f994a036d54",
+      "bytes": 4223,
+      "classification": "existing source-controlled document"
+    },
+    {
+      "source": "runtime/core/README.md",
+      "sha256": "5d2776853a69935bd5a9297f22f05028bd1deabb56ced8e575305f28eb0cd00b",
+      "bytes": 555,
+      "classification": "existing source-controlled document"
+    },
+    {
+      "source": "runtime/core/hw/gdrom/README.md",
+      "sha256": "52a9609a6d66fead3b9b797db6f7b2e1b1dafd529ee0f3ad657a73fbf67e4846",
+      "bytes": 237,
+      "classification": "existing source-controlled document"
+    },
+    {
+      "source": "runtime/docs/Dynarec Architecture.md",
+      "sha256": "917d30e91992f7bc03c0f86873ec4e5b0dd7de0cd16d0e4f9964de2b1b860ed9",
+      "bytes": 8294,
+      "classification": "existing source-controlled document"
+    },
+    {
+      "source": "runtime/docs/OT-Local-Network-Scope.md",
+      "sha256": "07306fd35b975387e97d36f6664f76c5c2843087b6c69785156d2345f9fe403d",
+      "bytes": 1364,
+      "classification": "existing source-controlled document"
+    },
+    {
+      "source": "runtime/docs/P0-GIT-01-Source-Backup.txt",
+      "sha256": "50f26dac969e0411cfbc4cb4876d7bbb1395eebfb1f4480a4c09a5a5c8512a79",
+      "bytes": 5137,
+      "classification": "existing source-controlled document"
+    },
+    {
+      "source": "runtime/docs/engineering/GIT-BACKUP01-Development-Source.md",
+      "sha256": "ccf916c9de15e2f939a8084f21bd7e4d27ceeab80420ce089413f964b5f88a97",
+      "bytes": 1699,
+      "classification": "existing source-controlled document"
+    },
+    {
+      "source": "runtime/docs/engineering/GOLD01-RUNTIME-SOURCE.md",
+      "sha256": "1d4cb7aef5de169c82099f5632de3a64f4eb6fe3f77d77755c4395b07af772d0",
+      "bytes": 3026,
+      "classification": "existing source-controlled document"
+    },
+    {
+      "source": "runtime/docs/neil_corlett_aica_notes.txt",
+      "sha256": "be2800265283a8b680cad55bb90fab6c335be506b9c2c196416196ab02c63d6b",
+      "bytes": 40856,
+      "classification": "existing source-controlled document"
+    },
+    {
+      "source": "local-only/recovered-flycast-discussion.json",
+      "sha256": "ffe8c09173de521f3458ff2600894ded5f3d273819ed09b2d445f347a38b2998",
+      "classification": "retrieved discussion excerpt; not verified full V1.0 export"
+    }
+  ],
+  "missing": [
+    "README.md (approved replacement)",
+    "docs/ENGINEERING.md",
+    "docs/rendering/ (original filename manifest and complete text)",
+    "docs/performance/ (approved text and original filename manifest)",
+    "docs/hardware/ (original filename manifest and complete text)",
+    "CHANGELOG.md",
+    "DEVELOPMENT_HISTORY_V1.0.md",
+    "approved credits, linked assets and approval-to-revision provenance"
+  ],
+  "exportSearch": "The named +Flycast Lean R&D.txt export was not located in the inspected workspace, attachment, Downloads or ChatGPT document scopes. Retrieved discussion and historical source documents are preserved separately."
+}

@@ -17,6 +17,7 @@
 // along with this program; if not, write to the Free Software Foundation,
 // Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
 
+
 #ifdef BKPT_SUPPORT
 #define CONSOLE_OUTPUT(a,b) \
     extern void (*dbgOutput)(char *, u32);\
@@ -492,6 +493,7 @@
       clockTicks++;\
       int base = (opcode >> 16) & 0x0F;\
       int shift = reg[(opcode >> 8)&15].B.B0;\
+      reg[15].I += 4;\
       int dest = (opcode>>12) & 15;\
       bool C_OUT = C_FLAG;\
       u32 value;\
@@ -531,6 +533,7 @@
       clockTicks++;\
       int base = (opcode >> 16) & 0x0F;\
       int shift = reg[(opcode >> 8)&15].B.B0;\
+      reg[15].I += 4;\
       int dest = (opcode>>12) & 15;\
       bool C_OUT = C_FLAG;\
       u32 value;\
@@ -570,6 +573,7 @@
       clockTicks++;\
       int base = (opcode >> 16) & 0x0F;\
       int shift = reg[(opcode >> 8)&15].B.B0;\
+      reg[15].I += 4;\
       int dest = (opcode>>12) & 15;\
       bool C_OUT = C_FLAG;\
       u32 value;\
@@ -611,6 +615,7 @@
       clockTicks++;\
       int base = (opcode >> 16) & 0x0F;\
       int shift = reg[(opcode >> 8)&15].B.B0;\
+      reg[15].I += 4;\
       int dest = (opcode>>12) & 15;\
       bool C_OUT = C_FLAG;\
       u32 value;\
@@ -816,6 +821,7 @@
        /* OP Rd,Rb,Rm LSL Rs */\
       clockTicks++;\
       int shift = reg[(opcode >> 8)&15].B.B0;\
+      reg[15].I += 4;\
       int dest = (opcode>>12) & 15;\
       bool C_OUT = C_FLAG;\
       u32 value;\
@@ -852,6 +858,7 @@
        /* OP Rd,Rb,Rm LSR Rs */ \
       clockTicks++;\
       int shift = reg[(opcode >> 8)&15].B.B0;\
+      reg[15].I += 4;\
       int dest = (opcode>>12) & 15;\
       bool C_OUT = C_FLAG;\
       u32 value;\
@@ -888,6 +895,7 @@
        /* OP Rd,Rb,Rm ASR Rs */ \
       clockTicks++;\
       int shift = reg[(opcode >> 8)&15].B.B0;\
+      reg[15].I += 4;\
       int dest = (opcode>>12) & 15;\
       bool C_OUT = C_FLAG;\
       u32 value;\
@@ -926,6 +934,7 @@
        /* OP Rd,Rb,Rm ROR Rs */\
       clockTicks++;\
       int shift = reg[(opcode >> 8)&15].B.B0;\
+      reg[15].I += 4;\
       int dest = (opcode>>12) & 15;\
       bool C_OUT = C_FLAG;\
       u32 value;\
@@ -1123,6 +1132,7 @@
       clockTicks++;\
       int base = (opcode >> 16) & 0x0F;\
       int shift = reg[(opcode >> 8)&15].B.B0;\
+      reg[15].I += 4;\
       int dest = (opcode>>12) & 15;\
       u32 value;\
       if(shift) {\
@@ -1157,6 +1167,7 @@
       clockTicks++;\
       int base = (opcode >> 16) & 0x0F;\
       int shift = reg[(opcode >> 8)&15].B.B0;\
+      reg[15].I += 4;\
       int dest = (opcode>>12) & 15;\
       u32 value;\
       if(shift) {\
@@ -1191,6 +1202,7 @@
       clockTicks++;\
       int base = (opcode >> 16) & 0x0F;\
       int shift = reg[(opcode >> 8)&15].B.B0;\
+      reg[15].I += 4;\
       int dest = (opcode>>12) & 15;\
       u32 value;\
       if(shift < 32) {\
@@ -1227,6 +1239,7 @@
       clockTicks++;\
       int base = (opcode >> 16) & 0x0F;\
       int shift = reg[(opcode >> 8)&15].B.B0;\
+      reg[15].I += 4;\
       int dest = (opcode>>12) & 15;\
       u32 value;\
       if(shift) {\

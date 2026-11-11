@@ -1,12 +1,13 @@
 #pragma once
-#include "types.h"
-#include "types.h"
 #include "maple_devs.h"
+#include <memory>
 
-extern maple_device* MapleDevices[4][6];
+extern std::shared_ptr<maple_device> MapleDevices[MAPLE_PORTS][6];
 
 void maple_Init();
 void maple_Reset(bool Manual);
 void maple_Term();
+void maple_ReconnectDevices();
+void maple_ReconnectDevice(int bus, int port);
 
 void maple_vblank();

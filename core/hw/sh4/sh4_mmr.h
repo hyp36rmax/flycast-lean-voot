@@ -1,53 +1,34 @@
 #pragma once
 #include "types.h"
-#include "../sh4/sh4_if.h"
+#include "sh4_if.h"
+#include "modules/modules.h"
+#include "modules/ccn.h"
+#include "modules/dmac.h"
 
 //For mem mapping
-void map_area7_init();
-void map_area7(u32 base);
+void map_area7();
 void map_p4();
 
-#define OnChipRAM_SIZE (0x2000)
-#define OnChipRAM_MASK (OnChipRAM_SIZE-1)
-
-#define sq_both ((u8*)sh4rcb.sq_buffer)
-
-extern Array<RegisterStruct> CCN;  //CCN  : 14 registers
-extern Array<RegisterStruct> UBC;  //UBC  : 9 registers
-extern Array<RegisterStruct> BSC;  //BSC  : 18 registers
-extern Array<RegisterStruct> DMAC; //DMAC : 17 registers
-extern Array<RegisterStruct> CPG;  //CPG  : 5 registers
-extern Array<RegisterStruct> RTC;  //RTC  : 16 registers
-extern Array<RegisterStruct> INTC; //INTC : 4 registers
-extern Array<RegisterStruct> TMU;  //TMU  : 12 registers
-extern Array<RegisterStruct> SCI;  //SCI  : 8 registers
-extern Array<RegisterStruct> SCIF; //SCIF : 10 registers
-
-/*
-//Region P4
-u32 ReadMem_P4(u32 addr,u32 sz);
-void WriteMem_P4(u32 addr,u32 data,u32 sz);
-
-//Area7
-u32 ReadMem_area7(u32 addr,u32 sz);
-void WriteMem_area7(u32 addr,u32 data,u32 sz);
-void __fastcall WriteMem_sq_32(u32 address,u32 data);*/
-
-//Init/Res/Term
 void sh4_mmr_init();
-void sh4_mmr_reset();
+void sh4_mmr_reset(bool hard);
 void sh4_mmr_term();
 
-void sh4_rio_reg(Array<RegisterStruct>& arr, u32 addr, RegIO flags, u32 sz, RegReadAddrFP* rp=0, RegWriteAddrFP* wp=0);
+namespace sh4
+{
 
-#define A7_REG_HASH(addr) ((addr>>16)&0x1FFF)
+void serialize(Serializer& ser);
+void deserialize(Deserializer& deser);
+void serialize2(Serializer& ser);
+void deserialize2(Deserializer& deser);
 
-#define SH4IO_REGN(mod,addr,size) (mod[(addr&255)/4].data##size)
-#define SH4IO_REG(mod,name,size) SH4IO_REGN(mod,mod##_##name##_addr,size)
-#define SH4IO_REG_T(mod,name,size) ((mod##_##name##_type&)SH4IO_REG(mod,name,size))
+}
 
-#define SH4IO_REG_OFS(mod,name,o,s,size) SH4IO_REGN(mod,mod##_##name##0_addr+o*s,size)
-#define SH4IO_REG_T_OFS(mod,name,o,s,size) ((mod##_##name##_type&)SH4IO_REG_OFS(mod,name,o,s,size))
+#define SH4IO_REGN(mod, addr) ((mod)[((addr) & 255) / 4])
+#define SH4IO_REG(mod, name) SH4IO_REGN(mod, mod##_##name##_addr)
+#define SH4IO_REG_T(mod, name) ((mod##_##name##_type&)SH4IO_REG(mod, name))
+
+#define SH4IO_REG_OFS(mod, name, o, s) SH4IO_REGN(mod, mod##_##name##0_addr + (o) * (s))
+#define SH4IO_REG_T_OFS(mod, name, o, s) ((mod##_##name##_type&)SH4IO_REG_OFS(mod, name, o, s))
 
 //CCN module registers base
 #define CCN_BASE_addr 0x1F000000
@@ -85,6 +66,9 @@ void sh4_rio_reg(Array<RegisterStruct>& arr, u32 addr, RegIO flags, u32 sz, RegR
 //CCN INTEVT 0xFF000028 0x1F000028 32 Undefined Undefined Held Held Iclk
 #define CCN_INTEVT_addr 0x1F000028
 
+// Undocumented. Returns 0x040205c1
+#define CPU_VERSION_addr 0x1F000030
+
 //CCN PTEA 0xFF000034 0x1F000034 32 Undefined Undefined Held Held Iclk
 #define CCN_PTEA_addr 0x1F000034
 
@@ -93,6 +77,9 @@ void sh4_rio_reg(Array<RegisterStruct>& arr, u32 addr, RegIO flags, u32 sz, RegR
 
 //CCN QACR1 0xFF00003C 0x1F00003C 32 Undefined Undefined Held Held Iclk
 #define CCN_QACR1_addr 0x1F00003C
+
+// Undocumented. Returns 0
+#define CCN_PRR_addr 0x1F000044
 
 //UBC module registers base
 #define UBC_BASE_addr 0x1F200000
@@ -319,6 +306,9 @@ void sh4_rio_reg(Array<RegisterStruct>& arr, u32 addr, RegIO flags, u32 sz, RegR
 //INTC IPRC 0xFFD0000C 0x1FD0000C 16 0x0000 0x0000 Held Held Pclk
 #define INTC_IPRC_addr 0x1FD0000C
 
+//INTC IPRD 0xFFD00010 0x1FD00010 16 0xDA74 0xDA74 Held Held Pclk	(SH7750S, SH7750R only)
+#define INTC_IPRD_addr 0x1FD00010
+
 //TMU module registers base
 #define TMU_BASE_addr 0x1FD80000
 
@@ -439,7 +429,7 @@ union BSC_BCR1_type
 	struct
 	{
 		u32 A56PCM  : 1;
-		u32 res_0   : 1;
+		u32         : 1;
 		u32 DRAMTP0 : 1;
 		u32 DRAMTP1 : 1;
 		u32 DRAMTP2 : 1;
@@ -456,20 +446,17 @@ union BSC_BCR1_type
 		u32 HIZCNT : 1;
 		u32 HIZMEM : 1;
 		//16
-		u32 res_1  : 1;
+		u32        : 1;
 		u32 MEMMPX : 1;
 		u32 PSHR   : 1;
 		u32 BREQEN : 1;
 		u32 A4MBC  : 1;
 		u32 A1MBC  : 1;
-		u32 res_2  : 1;
-		u32 res_3  : 1;
+		u32        : 2;
 		//24
 		u32 OPUP   : 1;
 		u32 IPUP   : 1;
-		u32 res_4  : 1;
-		u32 res_5  : 1;
-		u32 res_6  : 1;
+		u32        : 3;
 		u32 A0MPX  : 1;  // Set to 1 (area 0 is mpx)
 		u32 MASTER : 1; // What is it on the Dreamcast ?
 		u32 ENDIAN : 1; // This is 1 on the Dreamcast
@@ -478,9 +465,7 @@ union BSC_BCR1_type
 	u32 full;
 };
 
-
-#define BSC_BCR1 SH4IO_REG_T(BSC,BCR1,32)
-//extern BCR1_type BSC_BCR1;
+#define BSC_BCR1 SH4IO_REG_T(BSC, BCR1)
 
 //16 bit
 //A0SZ0,A0SZ1 are read only , others are are editable and reseted to 0
@@ -489,7 +474,7 @@ union BSC_BCR2_type
 	struct
 	{
 		u32 PORTEN    : 1;
-		u32 res_0     : 1;
+		u32           : 1;
 		u32 A0SZ0     : 1;
 		u32 A1SZ1     : 1;
 		u32 A2SZ0     : 1;
@@ -510,7 +495,7 @@ union BSC_BCR2_type
 
 	u16 full;
 };
-#define BSC_BCR2 SH4IO_REG_T(BSC,BCR2,16)
+#define BSC_BCR2 SH4IO_REG_T(BSC, BCR2)
 
 //32 bits
 union BSC_WCR1_type
@@ -520,43 +505,43 @@ union BSC_WCR1_type
 		u32 A0IW0  : 1;
 		u32 A0IW1  : 1;
 		u32 A0IW2  : 1;
-		u32 res_0  : 1;
+		u32        : 1;
 		u32 A1IW0  : 1;
 		u32 A1IW1  : 1;
 		u32 A1IW2  : 1;
-		u32 res_1  : 1;
+		u32        : 1;
 		//8
 		u32 A2IW0  : 1;
 		u32 A2IW1  : 1;
 		u32 A2IW2  : 1;
-		u32 res_2  : 1;
+		u32        : 1;
 		u32 A3IW0  : 1;
 		u32 A3IW1  : 1;
 		u32 A3IW2  : 1;
-		u32 res_3  : 1;
+		u32        : 1;
 		//16
 		u32 A4IW0  : 1;
 		u32 A4IW1  : 1;
 		u32 A4IW2  : 1;
-		u32 res_4  : 1;
+		u32        : 1;
 		u32 A5IW0  : 1;
 		u32 A5IW1  : 1;
 		u32 A5IW2  : 1;
-		u32 res_5  : 1;
+		u32        : 1;
 		//24
 		u32 A6IW0  : 1;
 		u32 A6IW1  : 1;
 		u32 A6IW2  : 1;
-		u32 res_6  : 1;
+		u32        : 1;
 		u32 DMAIW0 : 1;
 		u32 DMAIW1 : 1;
 		u32 DMAIW2 : 1;
-		u32 res_7  : 1;
+		u32        : 1;
 	};
 
 	u32 full;
 };
-#define BSC_WCR1 SH4IO_REG_T(BSC,WCR1,32)
+#define BSC_WCR1 SH4IO_REG_T(BSC, WCR1)
 
 //32 bits
 union BSC_WCR2_type
@@ -576,12 +561,12 @@ union BSC_WCR2_type
 		u32 A2W0  : 1;
 		u32 A2W1  : 1;
 		u32 A2W2  : 1;
-		u32 res_0 : 1;
+		u32       : 1;
 		u32 A3W0  : 1;
 		u32 A3W1  : 1;
 		u32 A3W2  : 1;
 		//16
-		u32 res_1 : 1;
+		u32       : 1;
 		u32 A4W0  : 1;
 		u32 A4W1  : 1;
 		u32 A4W2  : 1;
@@ -603,7 +588,7 @@ union BSC_WCR2_type
 	u32 full;
 };
 
-#define BSC_WCR2 SH4IO_REG_T(BSC,WCR2,32)
+#define BSC_WCR2 SH4IO_REG_T(BSC, WCR2)
 
 //32 bits
 union BSC_WCR3_type
@@ -613,45 +598,41 @@ union BSC_WCR3_type
 		u32 A0H0   : 1;
 		u32 A0H1   : 1;
 		u32 A0S0   : 1;
-		u32 res_0  : 1;
+		u32        : 1;
 		u32 A1H0   : 1; //TODO: check if this is correct, on the manual it says A1H0 .. typo in the manual ? 
 		u32 A1H1   : 1;
 		u32 A1S0   : 1;
-		u32 res_1  : 1;
+		u32        : 1;
 		//8
 		u32 A2H0   : 1;
 		u32 A2H1   : 1;
 		u32 A2S0   : 1;
-		u32 res_2  : 1;
+		u32        : 1;
 		u32 A3H0   : 1;
 		u32 A3H1   : 1;
 		u32 A3S0   : 1;
-		u32 res_3  : 1;
+		u32        : 1;
 		//16
 		u32 A4H0   : 1;
 		u32 A4H1   : 1;
 		u32 A4S0   : 1;
-		u32 res_4  : 1;
+		u32        : 1;
 		u32 A5H0   : 1;
 		u32 A5H1   : 1;
 		u32 A5S0   : 1;
-		u32 res_5  : 1;
+		u32        : 1;
 		//24
 		u32 A6H0   : 1;
 		u32 A6H1   : 1;
 		u32 A6S0   : 1;
-		u32 res_6  : 1;
-		u32 res_7  : 1;
-		u32 res_8  : 1;
-		u32 res_9  : 1;
-		u32 res_10 : 1;
+		u32        : 5;
 	};
 
 	u32 full;
 };
 
 
-#define BSC_WCR3 SH4IO_REG_T(BSC,WCR3,32)
+#define BSC_WCR3 SH4IO_REG_T(BSC, WCR3)
 
 //32 bits
 union BSC_MCR_type
@@ -678,16 +659,14 @@ union BSC_MCR_type
 		//16
 		u32 RCD0     : 1;
 		u32 RCD1     : 1;
-		u32 res_0    : 1;
+		u32          : 1;
 		u32 TPC0     : 1;
 		u32 TPC1     : 1;
 		u32 TPC2     : 1;
-		u32 res_1    : 1;
+		u32          : 1;
 		u32 TCAS     : 1;
 		//24
-		u32 res_2    : 1;
-		u32 res_3    : 1;
-		u32 res_4    : 1;
+		u32          : 3;
 		u32 TRC0     : 1;
 		u32 TRC1     : 1;
 		u32 TRC2     : 1;
@@ -699,7 +678,7 @@ union BSC_MCR_type
 };
 
 
-#define BSC_MCR SH4IO_REG_T(BSC,MCR,32)
+#define BSC_MCR SH4IO_REG_T(BSC, MCR)
 
 //16 bits
 union BSC_PCR_type
@@ -728,7 +707,7 @@ union BSC_PCR_type
 	u16 full;
 };
 
-#define BSC_PCR SH4IO_REG_T(BSC,PCR,16)
+#define BSC_PCR SH4IO_REG_T(BSC, PCR)
 
 //16 bits -> misstype on manual ? RTSCR vs RTCSR...
 union BSC_RTCSR_type
@@ -744,20 +723,13 @@ union BSC_RTCSR_type
 		u32 CMIE : 1;
 		u32 CMF  : 1;
 		//8
-		u32 res_0 : 1;
-		u32 res_1 : 1;
-		u32 res_2 : 1;
-		u32 res_3 : 1;
-		u32 res_4 : 1;
-		u32 res_5 : 1;
-		u32 res_6 : 1;
-		u32 res_7 : 1;
+		u32       : 8;
 		//16
 	};
 	u16 full;
 };
 
-#define BSC_RTCSR SH4IO_REG_T(BSC,RTCSR,16)
+#define BSC_RTCSR SH4IO_REG_T(BSC, RTCSR)
 
 //16 bits
 union BSC_RTCNT_type
@@ -766,20 +738,13 @@ union BSC_RTCNT_type
 	{
 		u32 VALUE : 8;
 		//8
-		u32 res_0 : 1;
-		u32 res_1 : 1;
-		u32 res_2 : 1;
-		u32 res_3 : 1;
-		u32 res_4 : 1;
-		u32 res_5 : 1;
-		u32 res_6 : 1;
-		u32 res_7 : 1;
+		u32       : 8;
 		//16
 	};
 	u16 full;
 };
 
-#define BSC_RTCNT SH4IO_REG_T(BSC,RTCNT,16)
+#define BSC_RTCNT SH4IO_REG_T(BSC, RTCNT)
 
 //16 bits
 union BSC_RTCOR_type
@@ -788,21 +753,14 @@ union BSC_RTCOR_type
 	{
 		u32 VALUE : 8;
 		//8
-		u32 res_0 : 1;
-		u32 res_1 : 1;
-		u32 res_2 : 1;
-		u32 res_3 : 1;
-		u32 res_4 : 1;
-		u32 res_5 : 1;
-		u32 res_6 : 1;
-		u32 res_7 : 1;
+		u32       : 8;
 		//16
 	};
 	u16 full;
 };
 
 
-#define BSC_RTCOR SH4IO_REG_T(BSC,RTCOR,16)
+#define BSC_RTCOR SH4IO_REG_T(BSC, RTCOR)
 
 //16 bits
 union BSC_RFCR_type
@@ -810,19 +768,13 @@ union BSC_RFCR_type
 	struct
 	{
 		u32 VALUE : 10;
-		//10
-		u32 res_2 : 1;
-		u32 res_3 : 1;
-		u32 res_4 : 1;
-		u32 res_5 : 1;
-		u32 res_6 : 1;
-		u32 res_7 : 1;
+		u32       : 6;
 		//16
 	};
 	u16 full;
 };
 
-#define BSC_RFCR SH4IO_REG_T(BSC,RFCR,16)
+#define BSC_RFCR SH4IO_REG_T(BSC, RFCR)
 
 //32 bits
 union BSC_PCTRA_type
@@ -869,7 +821,7 @@ union BSC_PCTRA_type
 	u32 full;
 };
 
-#define BSC_PCTRA SH4IO_REG_T(BSC,PCTRA,32)
+#define BSC_PCTRA SH4IO_REG_T(BSC, PCTRA)
 
 //16 bits
 union BSC_PDTRA_type
@@ -898,7 +850,7 @@ union BSC_PDTRA_type
 	u16 full;
 };
 
-extern BSC_PDTRA_type BSC_PDTRA;
+#define BSC_PDTRA SH4IO_REG_T(BSC, PDTRA)
 
 //32 bits
 union BSC_PCTRB_type
@@ -914,38 +866,13 @@ union BSC_PCTRB_type
 		u32 PB19IO  : 1;
 		u32 PB19PUP : 1;
 		//8
-		u32 res_0   : 1;
-		u32 res_1   : 1;
-		u32 res_2   : 1;
-		u32 res_3   : 1;
-		u32 res_4   : 1;
-		u32 res_5   : 1;
-		u32 res_6   : 1;
-		u32 res_7   : 1;
-		//16
-		u32 res_8   : 1;
-		u32 res_9   : 1;
-		u32 res_10  : 1;
-		u32 res_11  : 1;
-		u32 res_12  : 1;
-		u32 res_13  : 1;
-		u32 res_14  : 1;
-		u32 res_15  : 1;
-		//24
-		u32 res_16  : 1;
-		u32 res_17  : 1;
-		u32 res_18  : 1;
-		u32 res_19  : 1;
-		u32 res_20  : 1;
-		u32 res_21  : 1;
-		u32 res_22  : 1;
-		u32 res_23  : 1;
+		u32         :24;
 	};
 
 	u32 full;
 };
 
-#define BSC_PCTRB SH4IO_REG_T(BSC,PCTRB,32)
+#define BSC_PCTRB SH4IO_REG_T(BSC, PCTRB)
 
 //16 bits
 union BSC_PDTRB_type
@@ -956,25 +883,13 @@ union BSC_PDTRB_type
 		u32 PB17DT : 1;
 		u32 PB18DT : 1;
 		u32 PB19DT : 1;
-		u32 res_0  : 1;
-		u32 res_1  : 1;
-		u32 res_2  : 1;
-		u32 res_3  : 1;
-		//8
-		u32 res_4  : 1;
-		u32 res_5  : 1;
-		u32 res_6  : 1;
-		u32 res_7  : 1;
-		u32 res_8  : 1;
-		u32 res_9  : 1;
-		u32 res_10 : 1;
-		u32 res_11 : 1;
+		u32        :12;
 		//16
 	};
 	u16 full;
 };
 
-#define BSC_PDTRB SH4IO_REG_T(BSC,PDTRB,16)
+#define BSC_PDTRB SH4IO_REG_T(BSC, PDTRB)
 
 //16 bits
 union BSC_GPIOIC_type
@@ -1003,7 +918,7 @@ union BSC_GPIOIC_type
 	u16 full;
 };
 
-#define BSC_GPIOIC SH4IO_REG_T(BSC,GPIOIC,16)
+#define BSC_GPIOIC SH4IO_REG_T(BSC, GPIOIC)
 
 
 
@@ -1012,7 +927,7 @@ union CCN_PTEH_type
 	struct
 	{
 		u32 ASID : 8;  //0-7 ASID
-		u32 res  : 2;  //8,9 reserved
+		u32      : 2;
 		u32 VPN  : 22; //10-31 VPN
 	};
 	u32 reg_data;
@@ -1032,9 +947,9 @@ union CCN_PTEL_type
 		u32 SZ1   : 1;
 
 		u32 V     : 1;
-		u32 res_0 : 1;
+		u32       : 1;
 		u32 PPN   : 19; //PPN 10-28
-		u32 res_1 : 3;
+		u32       : 3;
 	};
 	u32 reg_data;
 };
@@ -1044,13 +959,15 @@ union CCN_MMUCR_type
 	struct
 	{
 		u32 AT    : 1;
-		u32 res   : 1;
+		u32       : 1;
 		u32 TI    : 1;
-		u32 res_2 : 5;
+		u32       : 5;
 		u32 SV    : 1;
 		u32 SQMD  : 1;
 		u32 URC   : 6;
+		u32       : 2;
 		u32 URB   : 6;
+		u32       : 2;
 		u32 LRUI  : 6;
 	};
 	u32 reg_data;
@@ -1062,7 +979,7 @@ union CCN_PTEA_type
 	{
 		u32 SA  : 3;
 		u32 TC  : 1;
-		u32 res : 28;
+		u32     : 28;
 	};
 	u32 reg_data;
 };
@@ -1075,16 +992,16 @@ union CCN_CCR_type
 		u32 WT    : 1;
 		u32 CB    : 1;
 		u32 OCI   : 1;
-		u32 res   : 1;
+		u32       : 1;
 		u32 ORA   : 1;
-		u32 res_1 : 1;
+		u32       : 1;
 		u32 OIX   : 1;
 		u32 ICE   : 1;
-		u32 res_2 : 2;
+		u32       : 2;
 		u32 ICI   : 1;
-		u32 res_3 : 3;
+		u32       : 3;
 		u32 IIX   : 1;
-		u32 res_4 : 16;
+		u32       : 16;
 	};
 	u32 reg_data;
 };
@@ -1093,37 +1010,36 @@ union CCN_QACR_type
 {
 	struct
 	{
-		u32 res   : 2;
+		u32       : 2;
 		u32 Area  : 3;
-		u32 res_1 : 27;
+		u32       : 27;
 	};
 	u32 reg_data;
 };
 
 
 //Types
-#define CCN_PTEH SH4IO_REG_T(CCN,PTEH,32)
-#define CCN_PTEL SH4IO_REG_T(CCN,PTEL,32)
-#define CCN_TTB SH4IO_REG(CCN,TTB,32)
-#define CCN_TEA SH4IO_REG(CCN,TEA,32)
-#define CCN_MMUCR SH4IO_REG_T(CCN,MMUCR,32)
-#define CCN_BASRA SH4IO_REG(CCN,BASRA,8)
-#define CCN_BASRB SH4IO_REG(CCN,BASRB,8)
-#define CCN_CCR SH4IO_REG_T(CCN,CCR,32)
-#define CCN_TRA SH4IO_REG(CCN,TRA,32)
-#define CCN_EXPEVT SH4IO_REG(CCN,EXPEVT,32)
-#define CCN_INTEVT SH4IO_REG(CCN,INTEVT,32)
-#define CCN_PTEA SH4IO_REG_T(CCN,PTEA,32)
+#define CCN_PTEH SH4IO_REG_T(CCN, PTEH)
+#define CCN_PTEL SH4IO_REG_T(CCN, PTEL)
+#define CCN_TTB SH4IO_REG(CCN, TTB)
+#define CCN_TEA SH4IO_REG(CCN, TEA)
+#define CCN_MMUCR SH4IO_REG_T(CCN, MMUCR)
+#define CCN_BASRA SH4IO_REG(CCN, BASRA)
+#define CCN_BASRB SH4IO_REG(CCN, BASRB)
+#define CCN_CCR SH4IO_REG_T(CCN, CCR)
+#define CCN_TRA SH4IO_REG(CCN, TRA)
+#define CCN_EXPEVT SH4IO_REG(CCN, EXPEVT)
+#define CCN_INTEVT SH4IO_REG(CCN, INTEVT)
+#define CCN_PTEA SH4IO_REG_T(CCN, PTEA)
 
-#define CCN_QACR0 SH4IO_REG_T(CCN,QACR0,32)
-#define CCN_QACR1 SH4IO_REG_T(CCN,QACR1,32)
+#define CCN_QACR0 ((CCN_QACR_type&)SH4IO_REG(CCN, QACR0))
+#define CCN_QACR1 ((CCN_QACR_type&)SH4IO_REG(CCN, QACR1))
 
-
-#define CPG_FRQCR SH4IO_REG(CPG,FRQCR,16)
-#define CPG_STBCR SH4IO_REG(CPG,STBCR,8)
-#define CPG_WTCNT SH4IO_REG(CPG,WTCNT,16)
-#define CPG_WTCSR SH4IO_REG(CPG,WTCSR,16)
-#define CPG_STBCR2 SH4IO_REG(CPG,STBCR2,8)
+#define CPG_FRQCR SH4IO_REG(CPG, FRQCR)
+#define CPG_STBCR SH4IO_REG(CPG, STBCR)
+#define CPG_WTCNT SH4IO_REG(CPG, WTCNT)
+#define CPG_WTCSR SH4IO_REG(CPG, WTCSR)
+#define CPG_STBCR2 SH4IO_REG(CPG, STBCR2)
 
 
 
@@ -1134,39 +1050,28 @@ union DMAC_CHCR_type
 		u32 DE    : 1; //Channel Enable
 		u32 TE    : 1; //Transfer End
 		u32 IE    : 1; //Interrupt Enable
-		u32 res0  : 1;
+		u32       : 1;
 
 		u32 TS    : 3; //Transmit Size
-		//u32 TS1 :1;
-		//u32 TS2 :1;
 		u32 TM    : 1; //Transmit Mode
 
 		u32 RS    : 4; //Resource Select
-		//u32 RS1 :1;
-		//u32 RS2 :1;
-		//u32 RS3 :1;
 
 		u32 SM    : 2; //SRC mode
-		//u32 SM1 :1;
 		u32 DM    : 2; //DST mode
-		//u32 DM1 :1;
 
 		u32 AL    : 1; //Acknowledge Level
 		u32 AM    : 1; //Acknowledge Mode
 		u32 RL    : 1; //In normal DMA mode, this bit is valid only in CHCR0 and CHCR1. In DDT mode, this bit is invalid.
-		u32 DS    : 1; //In normal DMA mode, this bit is valid only in CHCR0 and CHCR1. In DDT mode, it is valid in CHCR0–CHCR3.
+		u32 DS    : 1; //In normal DMA mode, this bit is valid only in CHCR0 and CHCR1. In DDT mode, it is valid in CHCR0ï¿½CHCR3.
 
-		u32 res1  : 4;
+		u32       : 4;
 
 		u32 DTC   : 1;
 		u32 DSA   : 3;
-		//u32 DSA1:1;
-		//u32 DSA2:1;
 
 		u32 STC   : 1;
 		u32 SSA   : 3;
-		//u32 SSA1:1;
-		//u32 SSA2:1;
 	};
 	u32 full;
 };
@@ -1175,68 +1080,58 @@ union DMAC_DMAOR_type
 {
 	struct
 	{
-		u32 DME  : 1;
-		u32 NMIF : 1;
-		u32 AE   : 1;
-		u32 res0 : 1;
+		u32 DME  : 1;	// DMAC master enable
+		u32 NMIF : 1;	// NMI flag
+		u32 AE   : 1;	// address error flag
+		u32      : 1;
+		u32 COD  : 1;	// check overrun for DREQ
+		u32      : 3;
 
-		u32 COD  : 1;
-		u32 res1 : 3;
+		u32 PR0  : 1;	// priority mode:
+		u32 PR1  : 1;	// PR0: 0, PR1: 1 => CH2 > CH0 > CH1 > CH3
+		u32      : 5;
+		u32 DDT  : 1;	// 0: normal DMA mode, 1: on-demand data transfer mode
 
-		u32 PR0  : 1;
-		u32 PR1  : 1;
-		u32 res2 : 2;
-
-		u32 res3 : 3;
-		u32 DDT  : 1;
-
-		u32 res4 : 16;
+		u32      : 16;
 	};
 	u32 full;
 };
 
-/*
-extern u32 DMAC_SAR[4];
-extern u32 DMAC_DAR[4];
-extern u32 DMAC_DMATCR[4];//only 24 bits valid
-extern DMAC_CHCR_type DMAC_CHCR[4];
-*/
+#define DMAC_SAR(x) SH4IO_REG_OFS(DMAC, SAR, x, 0x10)
+#define DMAC_DAR(x) SH4IO_REG_OFS(DMAC, DAR, x, 0x10)
+#define DMAC_DMATCR(x) SH4IO_REG_OFS(DMAC, DMATCR, x, 0x10)
+#define DMAC_CHCR(x) SH4IO_REG_T_OFS(DMAC, CHCR, x, 0x10)
 
-#define DMAC_SAR(x) SH4IO_REG_OFS(DMAC,SAR,x,0x10,32)
-#define DMAC_DAR(x) SH4IO_REG_OFS(DMAC,DAR,x,0x10,32)
-#define DMAC_DMATCR(x) SH4IO_REG_OFS(DMAC,DMATCR,x,0x10,32)
-#define DMAC_CHCR(x) SH4IO_REG_T_OFS(DMAC,CHCR,x,0x10,32)
-
-#define DMAC_DMAOR SH4IO_REG_T(DMAC,DMAOR,32)
+#define DMAC_DMAOR SH4IO_REG_T(DMAC, DMAOR)
 
 
 //UBC BARA 0xFF200000 0x1F200000 32 Undefined Held Held Held Iclk
-#define UBC_BARA SH4IO_REG(UBC,BARA,32)
+#define UBC_BARA SH4IO_REG(UBC, BARA)
 //UBC BAMRA 0xFF200004 0x1F200004 8 Undefined Held Held Held Iclk
-#define UBC_BAMRA SH4IO_REG(UBC,BAMRA,8)
+#define UBC_BAMRA SH4IO_REG(UBC, BAMRA)
 //UBC BBRA 0xFF200008 0x1F200008 16 0x0000 Held Held Held Iclk
-#define UBC_BBRA SH4IO_REG(UBC,BBRA,16)
+#define UBC_BBRA SH4IO_REG(UBC, BBRA)
 //UBC BARB 0xFF20000C 0x1F20000C 32 Undefined Held Held Held Iclk
-#define UBC_BARB SH4IO_REG(UBC,BARB,32)
+#define UBC_BARB SH4IO_REG(UBC, BARB)
 //UBC BAMRB 0xFF200010 0x1F200010 8 Undefined Held Held Held Iclk
-#define UBC_BAMRB SH4IO_REG(UBC,BAMRB,8)
+#define UBC_BAMRB SH4IO_REG(UBC, BAMRB)
 //UBC BBRB 0xFF200014 0x1F200014 16 0x0000 Held Held Held Iclk
-#define UBC_BBRB SH4IO_REG(UBC,BBRB,16)
+#define UBC_BBRB SH4IO_REG(UBC, BBRB)
 //UBC BDRB 0xFF200018 0x1F200018 32 Undefined Held Held Held Iclk
-#define UBC_BDRB SH4IO_REG(UBC,BDRB,32)
+#define UBC_BDRB SH4IO_REG(UBC, BDRB)
 //UBC BDMRB 0xFF20001C 0x1F20001C 32 Undefined Held Held Held Iclk
-#define UBC_BDMRB SH4IO_REG(UBC,BDMRB,32)
+#define UBC_BDMRB SH4IO_REG(UBC, BDMRB)
 //UBC BRCR 0xFF200020 0x1F200020 16 0x0000 Held Held Held Iclk
-#define UBC_BRCR SH4IO_REG(UBC,BRCR,16)
+#define UBC_BRCR SH4IO_REG(UBC, BRCR)
 
 //TCNT exists only as cached state
 //#define TMU_TCNT(x) SH4IO_REG_OFS(TMU,TCNT,x,12,32)
 
-#define TMU_TCOR(x) SH4IO_REG_OFS(TMU,TCOR,x,12,32)
-#define TMU_TCR(x) SH4IO_REG_OFS(TMU,TCR,x,12,16)
+#define TMU_TCOR(x) SH4IO_REG_OFS(TMU, TCOR, x, 12)
+#define TMU_TCR(x) SH4IO_REG_OFS(TMU, TCR, x, 12)
 
-#define TMU_TOCR SH4IO_REG(TMU,TOCR,8)
-#define TMU_TSTR SH4IO_REG(TMU,TSTR,8)
+#define TMU_TOCR SH4IO_REG(TMU, TOCR)
+#define TMU_TSTR SH4IO_REG(TMU, TSTR)
 
 
 
@@ -1245,202 +1140,158 @@ union SCIF_SCSMR2_type
 {
 	struct
 	{
-		u32 CKS0          : 1;
-		u32 CKS1          : 1;
-		u32 res_0         : 1;
-		u32 STOP          : 1;
-		u32 OE_paritymode : 1;
-		u32 PE            : 1;
-		u32 CHR           : 1;
-		u32 res_1         : 1;
-		//8
-		u32 res_2         : 1;
-		u32 res_3         : 1;
-		u32 res_4         : 1;
-		u32 res_5         : 1;
-		u32 res_6         : 1;
-		u32 res_7         : 1;
-		u32 res_8         : 1;
-		u32 res_9         : 1;
+		u32 CKS           : 2;	// Clock Select
+		u32               : 1;
+		u32 STOP          : 1;	// Stop Bit Length
+		u32 OE_paritymode : 1;	// Parity Mode
+		u32 PE            : 1;	// Parity Enable
+		u32 CHR           : 1;	// Character Length
+		u32               : 9;
 		//16
 	};
 	u16 full;
 };
 
-#define SCIF_SCSMR2 SH4IO_REG_T(SCIF,SCSMR2,16)
+#define SCIF_SCSMR2 SH4IO_REG_T(SCIF, SCSMR2)
 
 //SCIF SCBRR2 0xFFE80004 0x1FE80004 8 0xFF 0xFF Held Held Pclk
-#define SCIF_SCBRR2 SH4IO_REG(SCIF,SCBRR2,8)
+#define SCIF_SCBRR2 SH4IO_REG(SCIF, SCBRR2)
 
 //SCIF SCSCR2 0xFFE80008 0x1FE80008 16 0x0000 0x0000 Held Held Pclk
 union SCIF_SCSCR2_type
 {
 	struct
 	{
-		u32 res_0 : 1;
-		u32 CKE1  : 1;
-		u32 res_1 : 1;
-		u32 REIE  : 1;
-		u32 RE    : 1;
-		u32 TE    : 1;
-		u32 RIE   : 1;
-		u32 TIE   : 1;
+		u32       : 1;
+		u32 CKE1  : 1;	// Clock Enable 1
+		u32       : 1;
+		u32 REIE  : 1;	// Receive Error Interrupt Enable
+		u32 RE    : 1;	// Receive Enable
+		u32 TE    : 1;	// Transmit Enable
+		u32 RIE   : 1;	// Receive Interrupt Enable
+		u32 TIE   : 1;	// Transmit Interrupt Enable
 		//8
-		u32 res_2 : 1;
-		u32 res_3 : 1;
-		u32 res_4 : 1;
-		u32 res_5 : 1;
-		u32 res_6 : 1;
-		u32 res_7 : 1;
-		u32 res_8 : 1;
-		u32 res_9 : 1;
+		u32       : 8;
 		//16
 	};
 	u16 full;
 };
-#define SCIF_SCSCR2 SH4IO_REG_T(SCIF,SCSCR2,16)
+#define SCIF_SCSCR2 SH4IO_REG_T(SCIF, SCSCR2)
 
 //SCIF SCFTDR2 0xFFE8000C 0x1FE8000C 8 Undefined Undefined Held Held Pclk
-#define SCIF_SCFTDR2 SH4IO_REG(SCIF,SCFTDR2,8)
+#define SCIF_SCFTDR2 SH4IO_REG(SCIF, SCFTDR2)
 
 //SCIF SCFSR2 0xFFE80010 0x1FE80010 16 0x0060 0x0060 Held Held Pclk
 union SCIF_SCFSR2_type
 {
 	struct
 	{
-		u32 DR   : 1;
-		u32 RDF  : 1;
-		u32 PER  : 1;
-		u32 FER  : 1;
-		u32 BRK  : 1;
-		u32 TDFE : 1;
-		u32 TEND : 1;
-		u32 ER   : 1;
+		u32 DR   : 1;	// Receive Data Ready
+		u32 RDF  : 1;	// Receive FIFO Data Full
+		u32 PER  : 1;	// Parity Error
+		u32 FER  : 1;	// Framing Error
+		u32 BRK  : 1;	// Break Detect
+		u32 TDFE : 1;	// Transmit FIFO Data Empty
+		u32 TEND : 1;	// Transmit End
+		u32 ER   : 1;	// Receive Error
 		//8
-		u32 FER0 : 1;
-		u32 FER1 : 1;
-		u32 FER2 : 1;
-		u32 FER3 : 1;
-		u32 PER0 : 1;
-		u32 PER1 : 1;
-		u32 PER2 : 1;
-		u32 PER3 : 1;
+		u32 FERn : 4;	// Number of Framing Errors
+		u32 PERn : 4;	// Number of Parity Errors
 		//16
 	};
 	u16 full;
 };
-extern SCIF_SCFSR2_type SCIF_SCFSR2;
+#define SCIF_SCFSR2 SH4IO_REG_T(SCIF, SCFSR2)
 
 //SCIF SCFRDR2 0xFFE80014 0x1FE80014 8 Undefined Undefined Held Held Pclk
-//Read OLNY
-extern u8 SCIF_SCFRDR2;
+//Read ONLY
 
 //SCIF SCFCR2 0xFFE80018 0x1FE80018 16 0x0000 0x0000 Held Held Pclk
 union SCIF_SCFCR2_type
 {
 	struct
 	{
-		u32 LOOP  : 1;
-		u32 RFRST : 1;
-		u32 TFRST : 1;
-		u32 MCE   : 1;
-		u32 TTRG0 : 1;
-		u32 TTRG1 : 1;
-		u32 RTRG0 : 1;
-		u32 RTRG1 : 1;
+		u32 LOOP  : 1;	// Loopback Test
+		u32 RFRST : 1;	// Receive FIFO Data Register Reset
+		u32 TFRST : 1;	// Transmit FIFO Data Register Reset
+		u32 MCE   : 1;	// Modem Control Enable
+		u32 TTRG  : 2;	// Transmit FIFO Data Number Trigger
+		u32 RTRG  : 2;	// Receive FIFO Data Number Trigger
 		//8
-		u32 res_0 : 1;
-		u32 res_1 : 1;
-		u32 res_2 : 1;
-		u32 res_3 : 1;
-		u32 res_4 : 1;
-		u32 res_5 : 1;
-		u32 res_6 : 1;
-		u32 res_7 : 1;
+		u32       : 8;
 		//16
 	};
 	u16 full;
 };
-#define SCIF_SCFCR2 SH4IO_REG_T(SCIF,SCFCR2,16)
+#define SCIF_SCFCR2 SH4IO_REG_T(SCIF, SCFCR2)
 
-//Read OLNY
+//Read ONLY
 //SCIF SCFDR2 0xFFE8001C 0x1FE8001C 16 0x0000 0x0000 Held Held Pclk
 union SCIF_SCFDR2_type
 {
 	struct
 	{
-		u32 R     : 5;
-		u32 res_0 : 3;
+		u32 R     : 5;	// Number of received data bytes
+		u32       : 3;
 		//8
-		u32 T     : 5;
-		u32 res_1 : 3;
+		u32 T     : 5;	// Number of untransmitted data bytes
+		u32       : 3;
 		//16
 	};
 	u16 full;
 };
-extern SCIF_SCFDR2_type SCIF_SCFDR2;
 
 //SCIF SCSPTR2 0xFFE80020 0x1FE80020 16 0x0000 0x0000 Held Held Pclk
 union SCIF_SCSPTR2_type
 {
 	struct
 	{
-		u32 SPB2DT : 1;
-		u32 SPB2IO : 1;
-		u32 res_0  : 1;
-		u32 res_1  : 1;
-		u32 CTSDT  : 1;
-		u32 CTSIO  : 1;
-		u32 RTSDT  : 1;
-		u32 RTSIO  : 1;
+		u32 SPB2DT : 1;	// Serial Port Break Data
+		u32 SPB2IO : 1;	// Serial Port Break I/O
+		u32        : 2;
+		u32 CTSDT  : 1;	// Serial Port CTS Port Data
+		u32 CTSIO  : 1;	// Serial Port CTS Port I/O
+		u32 RTSDT  : 1;	// Serial Port RTS Port Data
+		u32 RTSIO  : 1;	// Serial Port RTS Port I/O
 		//8
-		u32 res_2  : 1;
-		u32 res_3  : 1;
-		u32 res_4  : 1;
-		u32 res_5  : 1;
-		u32 res_6  : 1;
-		u32 res_7  : 1;
-		u32 res_8  : 1;
-		u32 res_9  : 1;
+		u32        : 8;
 		//16
 	};
 	u16 full;
 };
-#define SCIF_SCSPTR2 SH4IO_REG_T(SCIF,SCSPTR2,16)
+#define SCIF_SCSPTR2 SH4IO_REG_T(SCIF, SCSPTR2)
 
 //SCIF SCLSR2 0xFFE80024 0x1FE80024 16 0x0000 0x0000 Held Held Pclk
 union SCIF_SCLSR2_type
 {
 	struct
 	{
-		u32 ORER  : 1;
-		u32 res_0 : 7;
-		//8
-		u32 res_1 : 8;
+		u32 ORER  : 1;	// Overrun Error
+		u32       :15;
 		//16
 	};
 	u16 full;
 };
-#define SCIF_SCLSR2 SH4IO_REG_T(SCIF,SCLSR2,16)
+#define SCIF_SCLSR2 SH4IO_REG_T(SCIF, SCLSR2)
 
 
-#define RTC_R64CNT SH4IO_REG(RTC,R64CNT,8)
-#define RTC_RSECCNT SH4IO_REG(RTC,RSECCNT,8)
-#define RTC_RMINCNT SH4IO_REG(RTC,RMINCNT,8)
-#define RTC_RHRCNT SH4IO_REG(RTC,RHRCNT,8)
-#define RTC_RWKCNT SH4IO_REG(RTC,RWKCNT,8)
-#define RTC_RDAYCNT SH4IO_REG(RTC,RDAYCNT,8)
-#define RTC_RMONCNT SH4IO_REG(RTC,RMONCNT,8)
-#define RTC_RYRCNT SH4IO_REG(RTC,RYRCNT,16)
+#define RTC_R64CNT SH4IO_REG(RTC, R64CNT)
+#define RTC_RSECCNT SH4IO_REG(RTC, RSECCNT)
+#define RTC_RMINCNT SH4IO_REG(RTC, RMINCNT)
+#define RTC_RHRCNT SH4IO_REG(RTC, RHRCNT)
+#define RTC_RWKCNT SH4IO_REG(RTC, RWKCNT)
+#define RTC_RDAYCNT SH4IO_REG(RTC, RDAYCNT)
+#define RTC_RMONCNT SH4IO_REG(RTC, RMONCNT)
+#define RTC_RYRCNT SH4IO_REG(RTC, RYRCNT)
 
-#define RTC_RSECAR SH4IO_REG(RTC,RSECAR,8)
-#define RTC_RMINAR SH4IO_REG(RTC,RMINAR,8)
-#define RTC_RHRAR SH4IO_REG(RTC,RHRAR,8)
-#define RTC_RWKAR SH4IO_REG(RTC,RWKAR,8)
-#define RTC_RDAYAR SH4IO_REG(RTC,RDAYAR,8)
-#define RTC_RMONAR SH4IO_REG(RTC,RMONAR,8)
-#define RTC_RCR1 SH4IO_REG(RTC,RCR1,8)
-#define RTC_RCR2 SH4IO_REG(RTC,RCR2,8)
+#define RTC_RSECAR SH4IO_REG(RTC, RSECAR)
+#define RTC_RMINAR SH4IO_REG(RTC, RMINAR)
+#define RTC_RHRAR SH4IO_REG(RTC, RHRAR)
+#define RTC_RWKAR SH4IO_REG(RTC, RWKAR)
+#define RTC_RDAYAR SH4IO_REG(RTC, RDAYAR)
+#define RTC_RMONAR SH4IO_REG(RTC, RMONAR)
+#define RTC_RCR1 SH4IO_REG(RTC, RCR1)
+#define RTC_RCR2 SH4IO_REG(RTC, RCR2)
 
 
 
@@ -1449,11 +1300,11 @@ union INTC_ICR_type
 	u16 reg_data;
 	struct
 	{
-		u32 res   : 7;
+		u32       : 7;
 		u32 IRLM  : 1;
 		u32 NMIE  : 1;
 		u32 NMIB  : 1;
-		u32 res_2 : 4;
+		u32       : 4;
 		u32 MAI   : 1;
 		u32 NMIL  : 1;
 	};
@@ -1476,7 +1327,7 @@ union INTC_IPRB_type
 	u16 reg_data;
 	struct
 	{
-		u32 Reserved : 4;
+		u32          : 4;
 		u32 SCI1     : 4;
 		u32 REF      : 4;
 		u32 WDT      : 4;
@@ -1495,8 +1346,16 @@ union INTC_IPRC_type
 	};
 };
 
-#define INTC_ICR SH4IO_REG_T(INTC,ICR,16)
+#define INTC_ICR SH4IO_REG_T(INTC, ICR)
 
-#define INTC_IPRA SH4IO_REG_T(INTC,IPRA,16)
-#define INTC_IPRB SH4IO_REG_T(INTC,IPRB,16)
-#define INTC_IPRC SH4IO_REG_T(INTC,IPRC,16)
+#define INTC_IPRA SH4IO_REG_T(INTC, IPRA)
+#define INTC_IPRB SH4IO_REG_T(INTC, IPRB)
+#define INTC_IPRC SH4IO_REG_T(INTC, IPRC)
+
+#define SCI_SCSMR1 SH4IO_REG(SCI, SCSMR1)
+#define SCI_SCBRR1 SH4IO_REG(SCI, SCBRR1)
+#define SCI_SCSCR1 SH4IO_REG(SCI, SCSCR1)
+#define SCI_SCTDR1 SH4IO_REG(SCI, SCTDR1)
+#define SCI_SCSSR1 SH4IO_REG(SCI, SCSSR1)
+#define SCI_SCRDR1 SH4IO_REG(SCI, SCRDR1)
+#define SCI_SCSPTR1 SH4IO_REG(SCI, SCSPTR1)

@@ -1,39 +1,26 @@
 #pragma once
 #include "types.h"
-#include "types.h"
-
-
-
-u32 pvr_map32(u32 offset32);
-f32 vrf(u32 addr);
-u32 vri(u32 addr);
+#include "stdclass.h"
+#include "hw/sh4/sh4_if.h"
 
 //vram 32-64b
-extern VArray2 vram;
-//read
-u8 DYNACALL pvr_read_area1_8(u32 addr);
-u16 DYNACALL pvr_read_area1_16(u32 addr);
-u32 DYNACALL pvr_read_area1_32(u32 addr);
-//write
-void DYNACALL pvr_write_area1_8(u32 addr,u8 data);
-void DYNACALL pvr_write_area1_16(u32 addr,u16 data);
-void DYNACALL pvr_write_area1_32(u32 addr,u32 data);
+extern RamRegion vram;
 
 //regs
 u32 pvr_ReadReg(u32 addr);
-void pvr_WriteReg(u32 paddr,u32 data);
+void pvr_WriteReg(u32 paddr, u32 data);
 
-void pvr_Update(u32 cycles);
-
-//Init/Term , global
-void pvr_Init();
-void pvr_Term();
-//Reset -> Reset - Initialise
-void pvr_Reset(bool Manual);
-
-void TAWrite(u32 address,u32* data,u32 count);
-extern "C" void DYNACALL TAWriteSQ(u32 address,u8* sqb);
+void DYNACALL TAWrite(u32 address, const SQBuffer *data, u32 count);
+void DYNACALL TAWriteSQ(u32 address, const SQBuffer *sqb);
 
 void YUV_init();
-//registers 
-#define PVR_BASE 0x005F8000
+void YUV_serialize(Serializer& ser);
+void YUV_deserialize(Deserializer& deser);
+void YUV_reset();
+
+// 32-bit vram path handlers
+template<typename T> T DYNACALL pvr_read32p(u32 addr);
+template<typename T, bool Internal = false> void DYNACALL pvr_write32p(u32 addr, T data);
+// Area 4 handlers
+template<typename T, bool upper> T DYNACALL pvr_read_area4(u32 addr);
+template<typename T, bool upper> void DYNACALL pvr_write_area4(u32 addr, T data);

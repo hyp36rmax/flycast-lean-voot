@@ -1,0 +1,52 @@
+// Microsoft Visual C++ generated resource script.
+//
+#include "resource.h"
+#include "../../core/version.h"
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// Icon
+//
+
+// Icon with lowest ID value placed first to ensure application icon
+// remains consistent on all systems.
+#ifdef OT_LEAN_RUNTIME
+IDI_ICON1               ICON                    "projectot.ico"
+#else
+IDI_ICON1               ICON                    "flycast.ico"
+#endif
+
+/////////////////////////////////////////////////////////////////////////////
+
+1 VERSIONINFO
+FILEVERSION     1,0,0,0
+PRODUCTVERSION  1,0,0,0
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "040904E4"
+    BEGIN
+#ifdef OT_LEAN_RUNTIME
+      VALUE "CompanyName", "Project OT contributors"
+      VALUE "FileDescription", "Project OT Runtime"
+#else
+      VALUE "CompanyName", "Flycast Team"
+      VALUE "FileDescription", "Flycast"
+#endif
+      VALUE "FileVersion", GIT_VERSION
+      VALUE "InternalName", "flycast"
+      VALUE "LegalCopyright", "Copyright various authors. Released under the GNU General Public License."
+      VALUE "OriginalFilename", "flycast.exe"
+#ifdef OT_LEAN_RUNTIME
+      VALUE "ProductName", "Project OT Runtime"
+#else
+      VALUE "ProductName", "Flycast is a multiplatform Sega Dreamcast, Naomi and Atomiswave emulator"
+#endif
+      VALUE "ProductVersion", GIT_VERSION
+    END
+  END
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x409, 1252
+  END
+END

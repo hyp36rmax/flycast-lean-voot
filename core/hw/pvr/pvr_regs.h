@@ -1,5 +1,6 @@
 #pragma once
-#include "drkPvr.h"
+#include "types.h"
+#include <cmath>
 
 #define pvr_RegSize (0x8000)
 #define pvr_RegMask (pvr_RegSize-1)
@@ -8,7 +9,7 @@
 
 extern u8 pvr_regs[pvr_RegSize];
 
-void Regs_Reset(bool Manual);
+void Regs_Reset(bool hard);
 
 
 #define ID_addr                 0x00000000 // R   Device ID
@@ -85,12 +86,12 @@ union FB_R_CTRL_type
 		u32 fb_line_double      : 1; //1
 		u32 fb_depth            : 2; //3-2
 		u32 fb_concat           : 3; //6-4
-		u32 R                   : 1; //7
+		u32                     : 1; //7
 		u32 fb_chroma_threshold : 8; //15-8
 		u32 fb_stripsize        : 6; //21-16
 		u32 fb_strip_buf_en     : 1; //22
 		u32 vclk_div            : 1; //23
-		u32 Reserved            : 8; //31-24
+		u32                     : 8; //31-24
 	};
 	u32 full;
 };
@@ -108,23 +109,90 @@ union FB_R_SIZE_type
 		u32 fb_x_size  : 10; //0
 		u32 fb_y_size  : 10; //10
 		u32 fb_modulus : 10; //20
-		u32 fb_res     : 12; //30
-	};
-	u32 full;
-};
-union VO_BORDER_COL_type
-{
-	struct
-	{
-		u32 Blue   : 8; //0
-		u32 Green  : 8; //8
-		u32 Red    : 8; //16
-		u32 Chroma : 1; //24
-		u32 res    : 7; //25
+		u32            : 2;  //30
 	};
 	u32 full;
 };
 
+template<typename T>
+struct RGBAColorTemplate
+{
+	float red() const { return ((T *)this)->_red / 255.f; }
+	float green() const { return ((T *)this)->_green / 255.f; }
+	float blue() const { return ((T *)this)->_blue / 255.f; }
+	float alpha() const { return ((T *)this)->_alpha / 255.f; }
+
+	void getRGBColor(float rgb[3]) const
+	{
+		rgb[0] = red();
+		rgb[1] = green();
+		rgb[2] = blue();
+	}
+
+	void getRGBAColor(float rgba[4]) const
+	{
+		getRGBColor(rgba);
+		rgba[3] = alpha();
+	}
+};
+
+struct VO_BORDER_COL_type : RGBAColorTemplate<VO_BORDER_COL_type>
+{
+	union {
+		struct
+		{
+			u32 _blue   : 8;
+			u32 _green  : 8;
+			u32 _red    : 8;
+			u32 _chroma : 1;
+			u32         : 7;
+		};
+		u32 full;
+	};
+
+	float blue() const
+	{
+		if (full == 0xff)
+			return 0.f;	// avoid pure blue (dinosaur king)
+		else
+			return _blue / 255.f;
+	}
+
+	void getRGBColor(float rgb[3]) const
+	{
+		rgb[0] = red();
+		rgb[1] = green();
+		rgb[2] = blue();
+	}
+};
+
+struct RGBColor : RGBAColorTemplate<RGBColor>
+{
+	union {
+		struct
+		{
+			u32 _blue  : 8;
+			u32 _green : 8;
+			u32 _red   : 8;
+			u32        : 8;
+		};
+		u32 full;
+	};
+};
+
+struct RGBAColor : RGBAColorTemplate<RGBAColor>
+{
+	union {
+		struct
+		{
+			u32 _blue  : 8;
+			u32 _green : 8;
+			u32 _red   : 8;
+			u32 _alpha : 8;
+		};
+		u32 full;
+	};
+};
 
 union SPG_STATUS_type
 {
@@ -135,7 +203,7 @@ union SPG_STATUS_type
 		u32 blank    : 1;  //11
 		u32 hsync    : 1;  //12
 		u32 vsync    : 1;  //13
-		u32 res      : 18; //31-14
+		u32          : 18; //31-14
 	};
 	u32 full;
 };
@@ -145,11 +213,11 @@ union SPG_HBLANK_INT_type
 	struct
 	{
 		u32 line_comp_val : 10;       //9-0
-		u32 res1 : 2;                 //10-11
-		u32 hblank_int_mode: 2;       //12-13
-		u32 res2 : 2;                 //14-15
+		u32      : 2;                 //11-10
+		u32 hblank_int_mode: 2;       //13-12
+		u32      : 2;                 //15-14
 		u32 hblank_in_interrupt : 10; //25-16
-		u32 res3 : 6;                 //31-26
+		u32      : 6;                 //31-26
 	};
 	u32 full;
 };
@@ -158,10 +226,10 @@ union SPG_VBLANK_INT_type
 {
 	struct
 	{
-		u32 vblank_in_interrupt_line_number : 10;//9-0
-		u32 res : 6 ; //15-10
-		u32 vblank_out_interrupt_line_number : 10;//25-16
-		u32 res1 : 6 ; //31-26
+		u32 vblank_in_interrupt_line_number  : 10; //9-0
+		u32                                  : 6;  //15-10
+		u32 vblank_out_interrupt_line_number : 10; //25-16
+		u32                                  : 6;  //31-26
 	};
 	u32 full;
 };
@@ -179,18 +247,22 @@ union SPG_CONTROL_type
 		u32 PAL            : 1;  //7
 		u32 sync_direction : 1;  //8
 		u32 csync_on_h     : 1;  //9
-		u32 Reserved       : 22; //31-10
+		u32                : 22; //31-10
 	};
 	u32 full;
+
+	bool isNTSC() const { return NTSC == 1 && PAL == 0; }
+	bool isPAL() const { return NTSC == 0 && PAL == 1; }
+	bool isVGA() const { return NTSC == 0 && PAL == 0; }
 };
 union SPG_HBLANK_type
 {
 	struct
 	{
 		u32 hstart : 10;//9-0
-		u32 res    : 6; //15-10
+		u32        : 6; //15-10
 		u32 hbend  : 10;//25-16
-		u32 res1   : 6; //31-26
+		u32        : 6; //31-26
 	};
 	u32 full;
 };
@@ -200,9 +272,9 @@ union SPG_LOAD_type
 	struct
 	{
 		u32 hcount : 10; //9-0
-		u32 res    : 6 ; //15-10	
+		u32        : 6 ; //15-10
 		u32 vcount : 10; //25-16
-		u32 res1   : 6 ; //31-26
+		u32        : 6 ; //31-26
 	};
 	u32 full;
 };
@@ -212,9 +284,9 @@ union SPG_VBLANK_type
 	struct
 	{
 		u32 vstart : 10; //9-0
-		u32 res    : 6 ; //15-10	
+		u32        : 6 ; //15-10
 		u32 vbend  : 10; //25-16
-		u32 res1   : 6 ; //31-26
+		u32        : 6 ; //31-26
 	};
 	u32 full;
 };
@@ -224,8 +296,8 @@ union SPG_WIDTH_type
 	struct
 	{
 		u32 hswidth : 7;  //6-0
-		u32 res     : 1;  //7-7
-		u32 vswidth : 4;  //8-11
+		u32         : 1;  //7
+		u32 vswidth : 4;  //11-8
 		u32 bpwidth : 10; //21-12
 		u32 eqwidth : 10; //31-22
 	};
@@ -237,9 +309,9 @@ union SCALER_CTL_type
 	struct
 	{
 		u32 vscalefactor : 16;//15-0
-		u32 hscale       : 1; //16-16
-		u32 interlace    : 1; //17-17
-		u32 fieldselect  : 1; //18-18
+		u32 hscale       : 1; //16
+		u32 interlace    : 1; //17
+		u32 fieldselect  : 1; //18
 	};
 	u32 full;
 };
@@ -249,9 +321,9 @@ union FB_X_CLIP_type
 	struct
 	{
 		u32 min  : 11;
-		u32 pad1 : 5;
+		u32      : 5;
 		u32 max  : 11;
-		u32 pad  : 5;
+		u32      : 5;
 	};
 	u32 full;
 };
@@ -260,10 +332,10 @@ union FB_Y_CLIP_type
 {
 	struct
 	{
-		u32 min  : 10; //15-0
-		u32 pad1 : 6 ; //16-16
-		u32 max  : 10; //17-17
-		u32 pad  : 6;  //18-18
+		u32 min  : 10; //9-0
+		u32      : 6 ; //15-10
+		u32 max  : 10; //25-16
+		u32      : 6;  //31-26
 	};
 	u32 full;
 };
@@ -276,11 +348,11 @@ union VO_CONTROL_type
 		u32 vsync_pol    : 1;  //1
 		u32 blank_pol    : 1;  //2
 		u32 blank_video  : 1;  //3
-		u32 field_mode   : 4;  //4
+		u32 field_mode   : 4;  //7-4
 		u32 pixel_double : 1;  //8
-		u32 res_1        : 7;  //9
-		u32 pclk_delay   : 6;  //16
-		u32 res_2        : 10; //22
+		u32              : 7;  //15-9
+		u32 pclk_delay   : 6;  //21-16
+		u32              : 10; //31-22
 	};
 	u32 full;
 };
@@ -289,8 +361,8 @@ union VO_STARTX_type
 {
 	struct
 	{
-		u32 HStart : 10; //0
-		u32 res_1  : 22; //10
+		u32 HStart : 10; //9-0
+		u32        : 22; //31-10
 	};
 	u32 full;
 };
@@ -298,10 +370,10 @@ union VO_STARTY_type
 {
 	struct
 	{
-		u32 VStart_field1:10; //0
-		u32 res_1:6;          //10
-		u32 VStart_field2:10; //16
-		u32 res_2:6;          //26
+		u32 VStart_field1:10; //9-0
+		u32      :6;          //15-10
+		u32 VStart_field2:10; //25-16
+		u32      :6;          //31-26
 	};
 	u32 full;
 };
@@ -331,10 +403,10 @@ union FB_W_CTRL_type
 	{
 		u32 fb_packmode        : 3;
 		u32 fb_dither          : 1;
-		u32 pad0               : 4;
+		u32                    : 4;
 		u32 fb_kval            : 8;
 		u32 fb_alpha_threshold : 8;
-		u32 pad1               : 8;
+		u32                    : 8;
 	};
 	u32 full;
 };
@@ -344,7 +416,7 @@ union FB_W_LINESTRIDE_type
 	struct
 	{
 		u32 stride : 9;
-		u32 pad0   : 23;
+		u32        : 23;
 	};
 	u32 full;
 };
@@ -354,11 +426,52 @@ union FPU_SHAD_SCALE_type
 	struct
 	{
 		u32 scale_factor    : 8;
-		u32 intesity_shadow : 1;
+		u32 intensity_shadow : 1;
+	};
+	u32 full;
+};
+
+union TA_GLOB_TILE_CLIP_type
+{
+	struct
+	{
+		u32 tile_x_num	: 6;
+		u32          	: 10;
+		u32 tile_y_num  : 4;
+		u32          	: 12;
 	};
 	u32 full;
 };
  
+union TA_YUV_TEX_CTRL_type
+{
+	struct
+	{
+		u32 yuv_u_size	: 6;
+		u32          	: 2;
+		u32 yuv_v_size	: 6;
+		u32          	: 2;
+		u32 yuv_tex		: 1;
+		u32          	: 7;
+		u32 yuv_form	: 1;
+		u32          	: 7;
+	};
+	u32 full;
+};
+
+union FOG_DENSITY_type
+{
+	struct
+	{
+		s8 exponent;
+		u8 mantissa;
+	};
+	u32 full;
+
+	float get() const {
+		return mantissa / 128.f * std::pow(2.0f, (float)exponent);
+	}
+};
 
 // TA REGS
 #define TA_OL_BASE_addr         0x00000124 // RW  Object list write start address
@@ -377,7 +490,8 @@ union FPU_SHAD_SCALE_type
 #define TA_LIST_CONT_addr       0x00000160 // RW  TA continuation processing
 #define TA_NEXT_OPB_INIT_addr   0x00000164 // RW  Additional OPB starting address
 
-
+#define SIGNATURE1_addr         0x00000180 // ?
+#define SIGNATURE2_addr         0x00000184 // ?
 
 #define FOG_TABLE_START_addr        0x00000200 // RW  Look-up table Fog data
 #define FOG_TABLE_END_addr          0x000003FC
@@ -392,7 +506,7 @@ union FPU_SHAD_SCALE_type
 
 // Regs -- Start
 
-#define ID                PvrReg(ID_addr,u32)	         // R   Device ID
+#define ID_Reg            PvrReg(ID_addr,u32)	         // R   Device ID
 #define REVISION          PvrReg(REVISION_addr,u32)      // R   Revision number
 #define SOFTRESET         PvrReg(SOFTRESET_addr,u32)     // RW  CORE & TA software reset
 	
@@ -419,7 +533,7 @@ union FPU_SHAD_SCALE_type
 
 
 #define FPU_SHAD_SCALE    PvrReg(FPU_SHAD_SCALE_addr,FPU_SHAD_SCALE_type) // RW  Intensity Volume mode
-#define FPU_CULL_VAL      PvrReg(FPU_CULL_VAL_addr,u32)                   // RW  Comparison value for culling
+#define FPU_CULL_VAL      PvrReg(FPU_CULL_VAL_addr,f32)                   // RW  Comparison value for culling
 #define FPU_PARAM_CFG     PvrReg(FPU_PARAM_CFG_addr,u32)                  // RW  Parameter read control
 #define HALF_OFFSET       PvrReg(HALF_OFFSET_addr,u32)                    // RW  Pixel sampling control
 #define FPU_PERP_VAL      PvrReg(FPU_PERP_VAL_addr,u32)                   // RW  Comparison value for perpendicular polygons
@@ -432,11 +546,11 @@ union FPU_SHAD_SCALE_type
 #define SDRAM_ARB_CFG     PvrReg(SDRAM_ARB_CFG_addr,u32)                  // RW  Texture memory arbiter control
 #define SDRAM_CFG         PvrReg(SDRAM_CFG_addr,u32)                      // RW  Texture memory control
 
-#define FOG_COL_RAM       PvrReg(FOG_COL_RAM_addr,u32)                    // RW  Color for Look Up table Fog
-#define FOG_COL_VERT      PvrReg(FOG_COL_VERT_addr,u32)                   // RW  Color for vertex Fog
-#define FOG_DENSITY       PvrReg(FOG_DENSITY_addr,u32)                    // RW  Fog scale value
-#define FOG_CLAMP_MAX     PvrReg(FOG_CLAMP_MAX_addr,u32)                  // RW  Color clamping maximum value
-#define FOG_CLAMP_MIN     PvrReg(FOG_CLAMP_MIN_addr,u32)                  // RW  Color clamping minimum value
+#define FOG_COL_RAM       PvrReg(FOG_COL_RAM_addr, RGBColor)              // RW  Color for Look Up table Fog
+#define FOG_COL_VERT      PvrReg(FOG_COL_VERT_addr, RGBColor)             // RW  Color for vertex Fog
+#define FOG_DENSITY       PvrReg(FOG_DENSITY_addr, FOG_DENSITY_type)      // RW  Fog scale value
+#define FOG_CLAMP_MAX     PvrReg(FOG_CLAMP_MAX_addr, RGBAColor)           // RW  Color clamping maximum value
+#define FOG_CLAMP_MIN     PvrReg(FOG_CLAMP_MIN_addr, RGBAColor)           // RW  Color clamping minimum value
 #define SPG_TRIGGER_POS   PvrReg(SPG_TRIGGER_POS_addr,u32)                // RW  External trigger signal HV counter value
 #define SPG_HBLANK_INT    PvrReg(SPG_HBLANK_INT_addr,SPG_HBLANK_INT_type) // RW  H-blank interrupt control
 #define SPG_VBLANK_INT    PvrReg(SPG_VBLANK_INT_addr,SPG_VBLANK_INT_type) // RW  V-blank interrupt control
@@ -467,11 +581,11 @@ union FPU_SHAD_SCALE_type
 #define TA_ISP_LIMIT      PvrReg(TA_ISP_LIMIT_addr,u32)      // RW Current ISP/TSP Parameter write address
 #define TA_NEXT_OPB       PvrReg(TA_NEXT_OPB_addr,u32)       // R  Global Tile clip control
 #define TA_ITP_CURRENT    PvrReg(TA_ITP_CURRENT_addr,u32)    // R  Current ISP/TSP Parameter write address
-#define TA_GLOB_TILE_CLIP PvrReg(TA_GLOB_TILE_CLIP_addr,u32) // RW Global Tile clip control
+#define TA_GLOB_TILE_CLIP PvrReg(TA_GLOB_TILE_CLIP_addr, TA_GLOB_TILE_CLIP_type) // RW Global Tile clip control
 #define TA_ALLOC_CTRL     PvrReg(TA_ALLOC_CTRL_addr,u32)     // RW Object list control
 #define TA_LIST_INIT      PvrReg(TA_LIST_INIT_addr,u32)      // RW TA initialization
 #define TA_YUV_TEX_BASE   PvrReg(TA_YUV_TEX_BASE_addr,u32)   // RW YUV422 texture write start address
-#define TA_YUV_TEX_CTRL   PvrReg(TA_YUV_TEX_CTRL_addr,u32)   // RW YUV converter control
+#define TA_YUV_TEX_CTRL   PvrReg(TA_YUV_TEX_CTRL_addr, TA_YUV_TEX_CTRL_type)   // RW YUV converter control
 #define TA_YUV_TEX_CNT    PvrReg(TA_YUV_TEX_CNT_addr,u32)    // R  YUV converter macro block counter value
 
 #define TA_LIST_CONT      PvrReg(TA_LIST_CONT_addr,u32)      // RW TA continuation processing
@@ -481,7 +595,3 @@ union FPU_SHAD_SCALE_type
 #define FOG_TABLE        (&PvrReg(FOG_TABLE_START_addr,u32))      // RW Look-up table Fog data
 #define TA_OL_POINTERS   (&PvrReg(TA_OL_POINTERS_START_addr),u32) // R  TA object List Pointer data
 #define PALETTE_RAM      (&PvrReg(PALETTE_RAM_START_addr,u32))    // RW Palette RAM
-
-
-#define TA_CURRENT_CTX (TA_ISP_BASE & 0xF00000)
-#define CORE_CURRENT_CTX (PARAM_BASE & 0xF00000)

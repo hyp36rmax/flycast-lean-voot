@@ -1,75 +1,127 @@
-/*
-	
+#pragma once
+//#define STRICT_MODE
+#ifndef STRICT_MODE
+#define FAST_MMU
+#define USE_WINCE_HACK
+#endif
 
-	nullDC-Beagle build configuration options
-
-	fine grained options
-	HOST_OS,HOST_CPU, ..
-
-	build-level options
-	TARGET_BEAGLE, TARGET_WIN86, ...
-
-	code shouldn't depend on build level options whenever possible
-*/
-
-//ndc configs
-
-#define NO_MMU
-//#define HOST_NO_REC
-
-#define DC_PLATFORM_MASK        7
-#define DC_PLATFORM_NORMAL      0   /* Works, for the most part */
-#define DC_PLATFORM_DEV_UNIT    1   /* This is missing hardware */
-#define DC_PLATFORM_NAOMI       2   /* Works, for the most part */ 
-#define DC_PLATFORM_NAOMI2      3   /* Needs to be done, 2xsh4 + 2xpvr + custom TNL */
-#define DC_PLATFORM_ATOMISWAVE  4   /* Needs to be done, DC-like hardware with possibly more ram */
-#define DC_PLATFORM_HIKARU      5   /* Needs to be done, 2xsh4, 2x aica , custom vpu */
-#define DC_PLATFORM_AURORA      6   /* Needs to be done, Uses newer 300 mhz sh4 + 150 mhz pvr mbx SoC */
- 
-
-#define DC_PLATFORM DC_PLATFORM_NORMAL
-
-
-//Target platform configs
-//HOST_OS
-#define OS_WINDOWS   0x10000001
-#define OS_LINUX     0x10000002
+#define DC_PLATFORM_DREAMCAST   0
+#define DC_PLATFORM_DEV_UNIT    1
+#define DC_PLATFORM_NAOMI       2
+#define DC_PLATFORM_NAOMI2      3
+#define DC_PLATFORM_ATOMISWAVE  4
+#define DC_PLATFORM_SYSTEMSP    5
 
 //HOST_CPU
 #define CPU_X86      0x20000001
 #define CPU_ARM      0x20000002
-#define CPU_MIPS     0x20000003
+#define CPU_ARM64    0x20000003
+#define CPU_X64      0x20000004
 
-//BUILD_COMPILER
-#define COMPILER_VC  0x30000001
-#define COMPILER_GCC 0x30000002
+//FEAT_SHREC, FEAT_AREC, FEAT_DSPREC
+#define DYNAREC_NONE	0x40000001
+#define DYNAREC_JIT		0x40000002
 
-///
-#if (!defined(TARGET_WIN86) && !defined(TARGET_BEAGLE) && !defined(TARGET_NACL32) && !defined(TARGET_GCW0) && !defined(TARGET_PANDORA))
-	#define TARGET_WIN86
-#endif
+//automatic
 
-#ifdef TARGET_WIN86
-	#define HOST_OS OS_WINDOWS
+#if defined(__x86_64__) || defined(_M_X64)
+	#define HOST_CPU CPU_X64
+#elif defined(__i386__) || defined(_M_IX86)
 	#define HOST_CPU CPU_X86
-	#define BUILD_COMPILER COMPILER_VC
-#elif TARGET_PANDORA
-	#define HOST_OS OS_LINUX
+#elif defined(__arm__) || defined (_M_ARM)
 	#define HOST_CPU CPU_ARM
-	#define BUILD_COMPILER COMPILER_GCC
-#elif TARGET_BEAGLE
-	#define HOST_OS OS_LINUX
-	#define HOST_CPU CPU_ARM
-	#define BUILD_COMPILER COMPILER_GCC
-#elif TARGET_GCW0
-	#define HOST_OS OS_LINUX
-	#define HOST_CPU CPU_MIPS
-	#define BUILD_COMPILER COMPILER_GCC
-#elif TARGET_NACL32
-	#define HOST_OS OS_LINUX
-	#define HOST_CPU CPU_X86
-	#define BUILD_COMPILER COMPILER_GCC
+#elif defined(__aarch64__) || defined(_M_ARM64)
+	#define HOST_CPU CPU_ARM64
 #else
-	#error Invalid Target: TARGET_* not defined
+	#error Unsupported architecture
 #endif
 
+#if defined(__APPLE__)
+#include "TargetConditionals.h"
+#if TARGET_OS_SIMULATOR
+// iOS simulator
+#define TARGET_NO_REC
+#endif
+#if defined(TARGET_MAC) && HOST_CPU == CPU_ARM64
+#define TARGET_ARM_MAC
+#endif
+#endif
+
+#if defined(TARGET_NO_REC)
+#define FEAT_SHREC DYNAREC_NONE
+#define FEAT_AREC DYNAREC_NONE
+#define FEAT_DSPREC DYNAREC_NONE
+#endif
+
+#if defined(TARGET_NO_AREC)
+#define FEAT_SHREC DYNAREC_JIT
+#define FEAT_AREC DYNAREC_NONE
+#define FEAT_DSPREC DYNAREC_NONE
+#endif
+
+#ifdef __SWITCH__
+#define FEAT_NO_RWX_PAGES
+#endif
+
+//defaults
+
+#ifndef FEAT_SHREC
+	#if HOST_CPU == CPU_ARM || HOST_CPU == CPU_ARM64 || HOST_CPU == CPU_X86 || HOST_CPU == CPU_X64
+		#define FEAT_SHREC DYNAREC_JIT
+	#else
+		#define FEAT_SHREC DYNAREC_NONE
+	#endif
+#endif
+
+#ifndef FEAT_AREC
+	#if HOST_CPU == CPU_ARM || HOST_CPU == CPU_ARM64 || HOST_CPU == CPU_X64
+		#define FEAT_AREC DYNAREC_JIT
+	#else
+		#define FEAT_AREC DYNAREC_NONE
+	#endif
+#endif
+
+#ifndef FEAT_DSPREC
+	#if HOST_CPU == CPU_ARM || HOST_CPU == CPU_ARM64 || HOST_CPU == CPU_X86 || HOST_CPU == CPU_X64
+		#define FEAT_DSPREC DYNAREC_JIT
+	#else
+		#define FEAT_DSPREC DYNAREC_NONE
+	#endif
+#endif
+
+// Some restrictions on FEAT_NO_RWX_PAGES
+#if defined(FEAT_NO_RWX_PAGES) && FEAT_SHREC == DYNAREC_JIT
+#if HOST_CPU != CPU_X64 && HOST_CPU != CPU_ARM64
+#error "FEAT_NO_RWX_PAGES Only implemented for X64 and ARMv8"
+#endif
+#endif
+
+#ifdef _WIN32
+#if defined(WINAPI_FAMILY) && (WINAPI_FAMILY == WINAPI_FAMILY_APP)
+#define TARGET_UWP 1
+#endif
+#ifdef HAVE_D3D11
+#define USE_DX11
+#endif
+#endif
+
+#if !defined(LIBRETRO)
+#define USE_GGPO
+#endif
+
+#if !defined(__ANDROID__) && !defined(TARGET_IPHONE) && !defined(TARGET_UWP) \
+	&& !defined(__SWITCH__) && !defined(LIBRETRO) && !defined(__NetBSD__) && !defined(__OpenBSD__)
+#define NAOMI_MULTIBOARD
+#endif
+
+// TARGET PLATFORM
+#define GD_CLOCK 33868800						//GDROM XTAL -- 768fs
+#define AICA_CORE_CLOCK (GD_CLOCK * 4 / 3)		//[45158400]  GD->PLL 3:4 -> AICA CORE	 -- 1024fs
+#define AICA_ARM_CLOCK (AICA_CORE_CLOCK / 2)	//[22579200]  AICA CORE -> PLL 2:1 -> ARM
+#define SH4_MAIN_CLOCK (200 * 1000 * 1000)		//[200000000] XTal(13.5) -> PLL (33.3) -> PLL 1:6 (200)
+#define G2_BUS_CLOCK (25 * 1000 * 1000)			//[25000000]  from Holly, from SH4_RAM_CLOCK w/ 2 2:1 plls
+
+#if defined(GLES) && !defined(GLES3) && !defined(GLES2)
+// Only use GL ES 2.0 API functions
+#define GLES2
+#endif

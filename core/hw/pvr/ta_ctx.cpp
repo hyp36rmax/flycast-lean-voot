@@ -1,14 +1,21 @@
-#include "ta.h"
 #include "ta_ctx.h"
+#include "spg.h"
+#include "cfg/option.h"
+#include "Renderer_if.h"
+#include "serialize.h"
+#include "stdclass.h"
+
+#include <mutex>
+#include <vector>
 
 extern u32 fskip;
-extern u32 FrameCount;
+static int RenderCount;
 
 TA_context* ta_ctx;
 tad_context ta_tad;
 
-TA_context*  vd_ctx;
-rend_context vd_rc;
+static void tactx_Recycle(TA_context* ctx);
+static TA_context *tactx_Find(u32 addr, bool allocnew = false);
 
 void SetCurrentTARC(u32 addr)
 {
@@ -32,157 +39,259 @@ void SetCurrentTARC(u32 addr)
 		
 		//clear context
 		ta_ctx=0;
-		ta_tad.thd_data=0;
-		ta_tad.thd_root=0;
+		ta_tad.Reset(0);
 	}
 }
 
-bool TryDecodeTARC()
-{
-	verify(ta_ctx);
+static TA_context* rqueue;
+static cResetEvent frame_finished;
 
-	if (vd_ctx == 0)
-	{
-		vd_ctx = ta_ctx;
-
-		vd_ctx->rend.proc_start = vd_ctx->rend.proc_end + 32;
-		vd_ctx->rend.proc_end = vd_ctx->tad.thd_data;
-
-		vd_ctx->rend_inuse.Lock();
-		vd_rc = vd_ctx->rend;
-
-		//signal the vdec thread
-		return true;
-	}
-	else
-		return false;
-}
-
-void VDecEnd()
-{
-	verify(vd_ctx);
-
-	vd_ctx->rend = vd_rc;
-
-	vd_ctx->rend_inuse.Unlock();
-
-	vd_ctx = 0;
-}
-
-cMutex mtx_rqueue;
-TA_context* rqueue;
-
-void QueueRender(TA_context* ctx)
+bool QueueRender(TA_context* ctx)
 {
 	verify(ctx != 0);
 	
-	mtx_rqueue.Lock();
-	TA_context* old = rqueue;
-	rqueue=ctx;
-	mtx_rqueue.Unlock();
-
-	if (old)
+	bool skipFrame = !rend_is_enabled();
+	if (!skipFrame)
 	{
-		tactx_Recycle(old);
-		fskip++;
+		RenderCount++;
+		if (RenderCount % (config::SkipFrame + 1) != 0)
+			skipFrame = true;
+		else if (config::ThreadedRendering && rqueue != nullptr
+				&& (config::AutoSkipFrame == 0 || (config::AutoSkipFrame == 1 && SH4FastEnough)))
+			// The previous render hasn't completed yet so we wait.
+			// If autoskipframe is enabled (normal level), we only do so if the CPU is running
+			// fast enough over the last frames
+			frame_finished.Wait();
 	}
+
+	if (skipFrame || rqueue)
+	{
+		tactx_Recycle(ctx);
+		if (rend_is_enabled())
+			fskip++;
+		return false;
+	}
+	// disable net rollbacks until the render thread has processed the frame
+	rend_disable_rollback();
+	frame_finished.Reset();
+	verify(rqueue == nullptr);
+	rqueue = ctx;
+
+
+	return true;
 }
 
 TA_context* DequeueRender()
 {
-	mtx_rqueue.Lock();
-	TA_context* rv = rqueue;
-	rqueue = 0;
-	mtx_rqueue.Unlock();
-
-	if (rv)
+	if (rqueue != nullptr)
 		FrameCount++;
 
-	return rv;
+	return rqueue;
 }
 
-cMutex mtx_pool;
-
-vector<TA_context*> ctx_pool;
-vector<TA_context*> ctx_list;
-
-TA_context* tactx_Alloc()
+void FinishRender(TA_context* ctx)
 {
-	TA_context* rv = 0;
-
-	mtx_pool.Lock();
-	if (ctx_pool.size())
+	if (ctx != nullptr)
 	{
-		rv = ctx_pool[ctx_pool.size()-1];
-		ctx_pool.pop_back();
+		verify(rqueue == ctx);
+		rqueue = nullptr;
+		tactx_Recycle(ctx);
 	}
-	mtx_pool.Unlock();
-	
-	if (!rv)
-	{
-		rv = new TA_context();
-		rv->Alloc();
-		printf("new tactx\n");
-	}
-
-	return rv;
+	frame_finished.Set();
 }
 
-void tactx_Recycle(TA_context* poped_ctx)
+static std::mutex mtx_pool;
+using Lock = std::lock_guard<std::mutex>;
+
+static std::vector<TA_context*> ctx_pool;
+static std::vector<TA_context*> ctx_list;
+
+TA_context *tactx_Alloc()
 {
-	mtx_pool.Lock();
+	TA_context *ctx = nullptr;
 	{
-		if (ctx_pool.size()>2)
-		{
-			poped_ctx->Free();
-			delete poped_ctx;
-		}
-		else
-		{
-			poped_ctx->Reset();
-			ctx_pool.push_back(poped_ctx);
+		Lock _(mtx_pool);
+		if (!ctx_pool.empty()) {
+			ctx = ctx_pool.back();
+			ctx_pool.pop_back();
 		}
 	}
-	mtx_pool.Unlock();
+
+	if (ctx == nullptr) {
+		ctx = new TA_context();
+		ctx->Alloc();
+	}
+	return ctx;
 }
 
-TA_context* tactx_Find(u32 addr, bool allocnew)
+static void tactx_Recycle(TA_context* ctx)
 {
-	for (size_t i=0; i<ctx_list.size(); i++)
+	if (ctx->nextContext != nullptr)
+		tactx_Recycle(ctx->nextContext);
+	Lock _(mtx_pool);
+	if (ctx_pool.size() > 3) {
+		delete ctx;
+	}
+	else {
+		ctx->Reset();
+		ctx_pool.push_back(ctx);
+	}
+}
+
+static TA_context *tactx_Find(u32 addr, bool allocnew)
+{
+	TA_context *oldCtx = nullptr;
+	for (TA_context *ctx : ctx_list)
 	{
-		if (ctx_list[i]->Address==addr)
-			return ctx_list[i];
+		if (ctx->Address == addr) {
+			ctx->lastFrameUsed = FrameCount;
+			return ctx;
+		}
+		if (FrameCount - ctx->lastFrameUsed > 60)
+			oldCtx = ctx;
 	}
 
 	if (allocnew)
 	{
-		TA_context* rv = tactx_Alloc();
-		rv->Address=addr;
-		ctx_list.push_back(rv);
+		TA_context *ctx;
+		if (oldCtx != nullptr)
+		{
+			ctx = oldCtx;
+			ctx->Reset();
+		}
+		else
+		{
+			ctx = tactx_Alloc();
+			ctx_list.push_back(ctx);
+		}
+		ctx->Address = addr;
+		ctx->lastFrameUsed = FrameCount;
 
-		return rv;
+		return ctx;
 	}
-	else
-	{
-		return 0;
-	}
+	return nullptr;
 }
 
-TA_context* tactx_Pop(u32 addr)
+TA_context *tactx_Pop(u32 addr)
 {
-	for (size_t i=0; i<ctx_list.size(); i++)
+	for (size_t i = 0; i < ctx_list.size(); i++)
 	{
-		if (ctx_list[i]->Address==addr)
+		if (ctx_list[i]->Address == addr)
 		{
-			TA_context* rv = ctx_list[i];
+			TA_context *ctx = ctx_list[i];
 			
-			if (ta_ctx == rv)
+			if (::ta_ctx == ctx)
 				SetCurrentTARC(TACTX_NONE);
 
 			ctx_list.erase(ctx_list.begin() + i);
 
-			return rv;
+			return ctx;
 		}
 	}
-	return 0;
+	return nullptr;
+}
+
+void tactx_Term()
+{
+	if (ta_ctx != nullptr)
+		SetCurrentTARC(TACTX_NONE);
+
+	for (TA_context *ctx : ctx_list)
+		delete ctx;
+	ctx_list.clear();
+
+	Lock _(mtx_pool);
+	for (TA_context *ctx : ctx_pool)
+		delete ctx;
+	ctx_pool.clear();
+}
+
+const u32 NULL_CONTEXT = ~0u;
+
+static void serializeContext(Serializer& ser, const TA_context *ctx)
+{
+	if (ser.dryrun())
+	{
+		// Maximum size: address, size, data
+		ser.skip(4 + 4 + TA_DATA_SIZE);
+		return;
+	}
+	if (ctx == nullptr)
+	{
+		ser << NULL_CONTEXT;
+		return;
+	}
+	ser << ctx->Address;
+	const tad_context& tad = ctx == ::ta_ctx ? ta_tad : ctx->tad;
+	const u32 taSize = tad.thd_data - tad.thd_root;
+	ser << taSize;
+	ser.serialize(tad.thd_root, taSize);
+}
+
+static void deserializeContext(Deserializer& deser, TA_context **pctx)
+{
+	u32 address;
+	deser >> address;
+	if (address == NULL_CONTEXT)
+	{
+		*pctx = nullptr;
+		return;
+	}
+	*pctx = tactx_Find(address, true);
+	u32 size;
+	deser >> size;
+	tad_context& tad = (*pctx)->tad;
+	deser.deserialize(tad.thd_root, size);
+	tad.thd_data = tad.thd_root + size;
+	if (deser.version() < Deserializer::V26)
+	{
+		u32 render_pass_count;
+		deser >> render_pass_count;
+		deser.skip(sizeof(u32) * render_pass_count);
+	}
+}
+
+void SerializeTAContext(Serializer& ser)
+{
+	ser << (u32)ctx_list.size();
+	int curCtx = -1;
+	for (const auto& ctx : ctx_list)
+	{
+		if (ctx == ::ta_ctx)
+			curCtx = (int)(&ctx - &ctx_list[0]);
+		serializeContext(ser, ctx);
+	}
+	ser << curCtx;
+}
+
+void DeserializeTAContext(Deserializer& deser)
+{
+	if (::ta_ctx != nullptr)
+		SetCurrentTARC(TACTX_NONE);
+	if (deser.version() >= Deserializer::V25)
+	{
+		u32 listSize;
+		deser >> listSize;
+		for (const auto& ctx : ctx_list)
+			tactx_Recycle(ctx);
+		ctx_list.clear();
+		for (u32 i = 0; i < listSize; i++)
+		{
+			TA_context *ctx;
+			deserializeContext(deser, &ctx);
+		}
+		int curCtx;
+		deser >> curCtx;
+		if (curCtx >= 0 && curCtx < (int)ctx_list.size())
+			SetCurrentTARC(ctx_list[curCtx]->Address);
+	}
+	else
+	{
+		TA_context *ta_cur_ctx;
+		deserializeContext(deser, &ta_cur_ctx);
+		if (ta_cur_ctx != nullptr)
+			SetCurrentTARC(ta_cur_ctx->Address);
+		if (deser.version() >= Deserializer::V20)
+			deserializeContext(deser, &ta_cur_ctx);
+	}
 }

@@ -1,578 +1,588 @@
-#include "oslib\oslib.h"
-#include "oslib\audiostream_rif.h"
+/*
+	This file is part of Flycast.
 
-#define _WIN32_WINNT 0x0500 
+    Flycast is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 2 of the License, or
+    (at your option) any later version.
+
+    Flycast is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with Flycast.  If not, see <https://www.gnu.org/licenses/>.
+*/
+#ifndef __STDC_FORMAT_MACROS
+#define __STDC_FORMAT_MACROS 1
+#endif
+#include "build.h"
+#ifdef TARGET_UWP
+#include <winrt/Windows.Globalization.h>
+#include <winrt/Windows.Globalization.DateTimeFormatting.h>
+#include <winrt/Windows.Storage.h>
+#include <io.h>
+#include <fcntl.h>
+#include <nowide/config.hpp>
+#include <nowide/convert.hpp>
+#include "cfg/option.h"
+#include "ui/gui.h"
+#endif
+#include "oslib/oslib.h"
+#include "stdclass.h"
+#include "cfg/cfg.h"
+#include "log/LogManager.h"
+#include "sdl/sdl.h"
+#include "emulator.h"
+#include "ui/mainui.h"
+#include "oslib/directory.h"
+#include "oslib/i18n.h"
+#include "dynlink.h"
+#ifdef USE_BREAKPAD
+#include "breakpad/client/windows/handler/exception_handler.h"
+#include "version.h"
+#endif
+#include "profiler/fc_profiler.h"
+
+#include <nowide/args.hpp>
+#ifdef FLYCAST_HOSTED_STARTUP
+#include <nowide/cstdlib.hpp>
+#endif
+#include <nowide/stackstring.hpp>
+#include <exception>
+
 #include <windows.h>
+#include <windowsx.h>
+#include <winsock2.h>
 
-
-PCHAR*
-	CommandLineToArgvA(
-	PCHAR CmdLine,
-	int* _argc
-	)
+static void setupPath()
 {
-	PCHAR* argv;
-	PCHAR  _argv;
-	ULONG   len;
-	ULONG   argc;
-	CHAR    a;
-	ULONG   i, j;
+#ifndef TARGET_UWP
+	wchar_t fname[512];
+	GetModuleFileNameW(0, fname, std::size(fname));
 
-	BOOLEAN  in_QM;
-	BOOLEAN  in_TEXT;
-	BOOLEAN  in_SPACE;
-
-	len = strlen(CmdLine);
-	i = ((len+2)/2)*sizeof(PVOID) + sizeof(PVOID);
-
-	argv = (PCHAR*)GlobalAlloc(GMEM_FIXED,
-		i + (len+2)*sizeof(CHAR));
-
-	_argv = (PCHAR)(((PUCHAR)argv)+i);
-
-	argc = 0;
-	argv[argc] = _argv;
-	in_QM = FALSE;
-	in_TEXT = FALSE;
-	in_SPACE = TRUE;
-	i = 0;
-	j = 0;
-
-	while( a = CmdLine[i] )
-	{
-		if(in_QM)
-		{
-			if(a == '\"') 
-			{
-				in_QM = FALSE;
-			}
-			else
-			{
-				_argv[j] = a;
-				j++;
-			}
-		}
-		else
-		{
-			switch(a)
-			{
-			case '\"':
-				in_QM = TRUE;
-				in_TEXT = TRUE;
-				if(in_SPACE) {
-					argv[argc] = _argv+j;
-					argc++;
-				}
-				in_SPACE = FALSE;
-				break;
-			case ' ':
-			case '\t':
-			case '\n':
-			case '\r':
-				if(in_TEXT)
-				{
-					_argv[j] = '\0';
-					j++;
-				}
-				in_TEXT = FALSE;
-				in_SPACE = TRUE;
-				break;
-			default:
-				in_TEXT = TRUE;
-				if(in_SPACE)
-				{
-					argv[argc] = _argv+j;
-					argc++;
-				}
-				_argv[j] = a;
-				j++;
-				in_SPACE = FALSE;
-				break;
-			}
-		}
-		i++;
-	}
-	_argv[j] = '\0';
-	argv[argc] = NULL;
-
-	(*_argc) = argc;
-	return argv;
-}
-
-
-
-bool VramLockedWrite(u8* address);
-bool ngen_Rewrite(unat& addr,unat retadr,unat acc);
-bool BM_LockedWrite(u8* address);
-
-int ExeptionHandler(u32 dwCode, void* pExceptionPointers)
-{
-	EXCEPTION_POINTERS* ep=(EXCEPTION_POINTERS*)pExceptionPointers;
-
-	EXCEPTION_RECORD* pExceptionRecord=ep->ExceptionRecord;
-
-	if (dwCode != EXCEPTION_ACCESS_VIOLATION)
-		return EXCEPTION_CONTINUE_SEARCH;
-
-	u8* address=(u8*)pExceptionRecord->ExceptionInformation[1];
-
-	if (VramLockedWrite(address))
-	{
-		return EXCEPTION_CONTINUE_EXECUTION;
-	}
-	else if (BM_LockedWrite(address))
-	{
-		return EXCEPTION_CONTINUE_EXECUTION;
-	}
-	else if ( ngen_Rewrite((unat&)ep->ContextRecord->Eip,*(unat*)ep->ContextRecord->Esp,ep->ContextRecord->Eax) )
-	{
-		//remove the call from call stack
-		ep->ContextRecord->Esp+=4;
-		//restore the addr from eax to ecx so its valid again
-		ep->ContextRecord->Ecx=ep->ContextRecord->Eax;
-		return EXCEPTION_CONTINUE_EXECUTION;
-	}
+	std::string fn;
+	nowide::stackstring path;
+	if (!path.convert(fname))
+		fn = ".\\";
 	else
-	{
-		printf("[GPF]Unhandled access to : 0x%X\n",address);
+		fn = path.get();
+	size_t pos = get_last_slash_pos(fn);
+	if (pos != std::string::npos)
+		fn = fn.substr(0, pos) + "\\";
+	else
+		fn = ".\\";
+	std::string data_path = fn + "data\\";
+#ifdef FLYCAST_HOSTED_STARTUP
+	// A hosted executable may live in a disposable binary cache. Persistent paths
+	// remain explicitly owned by the host; ordinary standalone startup is unchanged.
+	auto environment = [](const char* key) { const char* value = nowide::getenv(key); return value ? std::string(value) : std::string(); };
+	// nowide::getenv reuses one buffer: own each UTF-8 value before the next read.
+	const std::string hostConfig = environment("FLYCAST_HOST_CONFIG_DIR");
+	const std::string hostData = environment("FLYCAST_HOST_DATA_DIR");
+	if (!hostConfig.empty() || !hostData.empty()) {
+		auto absolute = [](const char* path) {
+			return path && ((std::strlen(path) > 2 && path[1] == ':' && (path[2] == '\\' || path[2] == '/'))
+				|| (std::strlen(path) > 1 && path[0] == '\\' && path[1] == '\\'));
+		};
+		if (!absolute(hostConfig.c_str()) || !absolute(hostData.c_str())) throw FlycastException("Hosted config/data directories must be absolute.");
+		fn = hostConfig; data_path = hostData;
+		if (fn.back() != '\\' && fn.back() != '/') fn += '\\';
+		if (data_path.back() != '\\' && data_path.back() != '/') data_path += '\\';
 	}
-
-	return EXCEPTION_CONTINUE_SEARCH;
+#endif
+	set_user_config_dir(fn);
+	add_system_data_dir(fn);
+	set_user_data_dir(data_path);
+	flycast::mkdir(data_path.c_str(), 0755);
+#else
+	using namespace Windows::Storage;
+	StorageFolder^ localFolder = Windows::Storage::ApplicationData::Current->LocalFolder;
+	nowide::stackstring path;
+	path.convert(localFolder->Path->Data());
+	std::string homePath(path.get());
+	homePath += '\\';
+	set_user_config_dir(homePath);
+	homePath += "data\\";
+	set_user_data_dir(homePath);
+	flycast::mkdir(homePath.c_str(), 0755);
+	SetEnvironmentVariable(L"HOMEPATH", localFolder->Path->Data());
+	SetEnvironmentVariable(L"HOMEDRIVE", nullptr);
+#endif
 }
 
-
-void SetupPath()
+static void reserveBottomMemory()
 {
-	char fname[512];
-	GetModuleFileName(0,fname,512);
-	string fn=string(fname);
-	fn=fn.substr(0,fn.find_last_of('\\'));
-	SetHomeDir(fn);
+#if defined(_WIN64) && defined(_DEBUG)
+    static bool s_initialized = false;
+    if ( s_initialized )
+        return;
+    s_initialized = true;
+
+    // Start by reserving large blocks of address space, and then
+    // gradually reduce the size in order to capture all of the
+    // fragments. Technically we should continue down to 64 KB but
+    // stopping at 1 MB is sufficient to keep most allocators out.
+
+    const size_t LOW_MEM_LINE = 0x100000000LL;
+    size_t totalReservation = 0;
+    size_t numVAllocs = 0;
+    size_t numHeapAllocs = 0;
+    for (size_t size = 256_MB; size >= 1_MB; size /= 2)
+    {
+        for (;;)
+        {
+            void* p = VirtualAlloc(0, size, MEM_RESERVE, PAGE_NOACCESS);
+            if (!p)
+                break;
+
+            if ((size_t)p >= LOW_MEM_LINE)
+            {
+                // We don't need this memory, so release it completely.
+                VirtualFree(p, 0, MEM_RELEASE);
+                break;
+            }
+
+            totalReservation += size;
+            ++numVAllocs;
+        }
+    }
+
+    // Now repeat the same process but making heap allocations, to use up
+    // the already reserved heap blocks that are below the 4 GB line.
+    HANDLE heap = GetProcessHeap();
+    for (size_t blockSize = 64_KB; blockSize >= 16; blockSize /= 2)
+    {
+        for (;;)
+        {
+            void* p = HeapAlloc(heap, 0, blockSize);
+            if (!p)
+                break;
+
+            if ((size_t)p >= LOW_MEM_LINE)
+            {
+                // We don't need this memory, so release it completely.
+                HeapFree(heap, 0, p);
+                break;
+            }
+
+            totalReservation += blockSize;
+            ++numHeapAllocs;
+        }
+    }
+
+    // Perversely enough the CRT doesn't use the process heap. Suck up
+    // the memory the CRT heap has already reserved.
+    for (size_t blockSize = 64_KB; blockSize >= 16; blockSize /= 2)
+    {
+        for (;;)
+        {
+            void* p = malloc(blockSize);
+            if (!p)
+                break;
+
+            if ((size_t)p >= LOW_MEM_LINE)
+            {
+                // We don't need this memory, so release it completely.
+                free(p);
+                break;
+            }
+
+            totalReservation += blockSize;
+            ++numHeapAllocs;
+        }
+    }
+
+    // Print diagnostics showing how many allocations we had to make in
+    // order to reserve all of low memory, typically less than 200.
+    char buffer[1000];
+    snprintf(buffer, sizeof(buffer),
+             "Reserved %1.3f MB (%d vallocs,"
+             "%d heap allocs) of low-memory.\n",
+             totalReservation / (1024 * 1024.0),
+             (int)numVAllocs, (int)numHeapAllocs);
+    OutputDebugStringA(buffer);
+#endif
 }
-
-int msgboxf(const wchar* text,unsigned int type,...)
+static void findKeyboardLayout()
 {
-	va_list args;
-
-	wchar temp[2048];
-	va_start(args, type);
-	vsprintf(temp, text, args);
-	va_end(args);
-
-
-	return MessageBox(NULL,temp,VER_SHORTNAME,type | MB_TASKMODAL);
-}
-
-u16 kcode[4];
-u32 vks[4];
-s8 joyx[4],joyy[4];
-u8 rt[4],lt[4];
-#define key_CONT_C            (1 << 0)
-#define key_CONT_B            (1 << 1)
-#define key_CONT_A            (1 << 2)
-#define key_CONT_START        (1 << 3)
-#define key_CONT_DPAD_UP      (1 << 4)
-#define key_CONT_DPAD_DOWN    (1 << 5)
-#define key_CONT_DPAD_LEFT    (1 << 6)
-#define key_CONT_DPAD_RIGHT   (1 << 7)
-#define key_CONT_Z            (1 << 8)
-#define key_CONT_Y            (1 << 9)
-#define key_CONT_X            (1 << 10)
-#define key_CONT_D            (1 << 11)
-#define key_CONT_DPAD2_UP     (1 << 12)
-#define key_CONT_DPAD2_DOWN   (1 << 13)
-#define key_CONT_DPAD2_LEFT   (1 << 14)
-#define key_CONT_DPAD2_RIGHT  (1 << 15)
-void UpdateInputState(u32 port)
-	{
-		//joyx[port]=pad.Lx;
-		//joyy[port]=pad.Ly;
-		lt[port]=GetAsyncKeyState('A')?255:0;
-		rt[port]=GetAsyncKeyState('S')?255:0;
-
-		joyx[port]=joyy[port]=0;
-
-		if (GetAsyncKeyState('J'))
-			joyx[port]-=126;
-		if (GetAsyncKeyState('L'))
-			joyx[port]+=126;
-
-		if (GetAsyncKeyState('I'))
-			joyy[port]-=126;
-		if (GetAsyncKeyState('K'))
-			joyy[port]+=126;
-
-		kcode[port]=0xFFFF;
-		if (GetAsyncKeyState('V'))
-			kcode[port]&=~key_CONT_A;
-		if (GetAsyncKeyState('C'))
-			kcode[port]&=~key_CONT_B;
-		if (GetAsyncKeyState('X'))
-			kcode[port]&=~key_CONT_Y;
-		if (GetAsyncKeyState('Z'))
-			kcode[port]&=~key_CONT_X;
-
-		if (GetAsyncKeyState(VK_SHIFT))
-			kcode[port]&=~key_CONT_START;
-
-		if (GetAsyncKeyState(VK_UP))
-			kcode[port]&=~key_CONT_DPAD_UP;
-		if (GetAsyncKeyState(VK_DOWN))
-			kcode[port]&=~key_CONT_DPAD_DOWN;
-		if (GetAsyncKeyState(VK_LEFT))
-			kcode[port]&=~key_CONT_DPAD_LEFT;
-		if (GetAsyncKeyState(VK_RIGHT))
-			kcode[port]&=~key_CONT_DPAD_RIGHT;
-
-		if (GetAsyncKeyState('1'))
-			settings.pvr.ta_skip = 1;
-
-		if (GetAsyncKeyState('2'))
-			settings.pvr.ta_skip = 0;
-	}
-
-
-
-LRESULT CALLBACK WndProc2(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
-{
-	switch (message)
-	{
-		/*
-		Here we are handling 2 system messages: screen saving and monitor power.
-		They are especially relevant on mobile devices.
-		*/
-	case WM_SYSCOMMAND:
-		{
-			switch (wParam)
-			{
-			case SC_SCREENSAVE:   // Screensaver trying to start ?
-			case SC_MONITORPOWER: // Monitor trying to enter powersave ?
-				return 0;         // Prevent this from happening
-			}
-			break;
-		}
-		// Handles the close message when a user clicks the quit icon of the window
-	case WM_CLOSE:
-		PostQuitMessage(0);
-		return 1;
-
+#ifndef TARGET_UWP
+	HKL keyboardLayout = GetKeyboardLayout(0);
+	WORD lcid = HIWORD(keyboardLayout);
+	switch (PRIMARYLANGID(lcid)) {
+	case 0x09:	// English
+		if (lcid == 0x0809)
+			settings.input.keyboardLangId = KeyboardLayout::UK;
+		else
+			settings.input.keyboardLangId = KeyboardLayout::US;
+		break;
+	case 0x11:
+		settings.input.keyboardLangId = KeyboardLayout::JP;
+		break;
+	case 0x07:
+		settings.input.keyboardLangId = KeyboardLayout::GE;
+		break;
+	case 0x0c:
+		settings.input.keyboardLangId = KeyboardLayout::FR;
+		break;
+	case 0x10:
+		settings.input.keyboardLangId = KeyboardLayout::IT;
+		break;
+	case 0x0A:
+		settings.input.keyboardLangId = KeyboardLayout::SP;
+		break;
 	default:
 		break;
 	}
-
-	// Calls the default window procedure for messages we did not handle
-	return DefWindowProc(hWnd, message, wParam, lParam);
+#endif
 }
 
-// Windows class name to register
-#define WINDOW_CLASS "nilDC"
-
-// Width and height of the window
-#define WINDOW_WIDTH  1024
-#define WINDOW_HEIGHT 512
-
-
-void* window_win;
-void os_CreateWindow()
+#if defined(USE_BREAKPAD)
+static bool dumpCallback(const wchar_t* dump_path,
+		const wchar_t* minidump_id,
+		void* context,
+		EXCEPTION_POINTERS* exinfo,
+		MDRawAssertionInfo* assertion,
+		bool succeeded)
 {
-	WNDCLASS sWC;
-	sWC.style = CS_HREDRAW | CS_VREDRAW;
-	sWC.lpfnWndProc = WndProc2;
-	sWC.cbClsExtra = 0;
-	sWC.cbWndExtra = 0;
-	sWC.hInstance = (HINSTANCE)GetModuleHandle(0);
-	sWC.hIcon = 0;
-	sWC.hCursor = 0;
-	sWC.lpszMenuName = 0;
-	sWC.hbrBackground = (HBRUSH) GetStockObject(WHITE_BRUSH);
-	sWC.lpszClassName = WINDOW_CLASS;
-	unsigned int nWidth = WINDOW_WIDTH;
-	unsigned int nHeight = WINDOW_HEIGHT;
-
-	ATOM registerClass = RegisterClass(&sWC);
-	if (!registerClass)
+	if (succeeded)
 	{
-		MessageBox(0, ("Failed to register the window class"), ("Error"), MB_OK | MB_ICONEXCLAMATION);
+		wchar_t s[MAX_PATH + 32];
+		_snwprintf(s, std::size(s), L"Minidump saved to '%s\\%s.dmp'", dump_path, minidump_id);
+		::OutputDebugStringW(s);
+
+		nowide::stackstring path;
+		if (path.convert(dump_path))
+		{
+			std::string directory = path.get();
+			if (path.convert(minidump_id))
+			{
+				std::string fullPath = directory + '\\' + std::string(path.get()) + ".dmp";
+				registerCrash(directory.c_str(), fullPath.c_str());
+			}
+		}
 	}
-
-	// Create the eglWindow
-	RECT sRect;
-	SetRect(&sRect, 0, 0, nWidth, nHeight);
-	AdjustWindowRectEx(&sRect, WS_CAPTION | WS_SYSMENU, false, 0);
-	HWND hWnd = CreateWindow( WINDOW_CLASS, VER_FULLNAME, WS_VISIBLE | WS_SYSMENU,
-		0, 0, sRect.right-sRect.left, sRect.bottom-sRect.top, NULL, NULL, sWC.hInstance, NULL);
-
-	window_win=hWnd;
-
-	void os_InitAudio();
-	os_InitAudio();
+	return succeeded;
 }
+#endif
 
-void* libPvr_GetRenderTarget() 
-{ 
-	return window_win; 
-}
+#ifdef TARGET_UWP
+namespace nowide {
 
-void* libPvr_GetRenderSurface() 
-{ 
-	return GetDC((HWND)window_win);
-}
-
-BOOL CtrlHandler( DWORD fdwCtrlType ) 
-{ 
-	switch( fdwCtrlType ) 
-	{
-		case CTRL_SHUTDOWN_EVENT:
-		case CTRL_LOGOFF_EVENT:
-		// Pass other signals to the next handler. 
-		case CTRL_BREAK_EVENT:
-		// CTRL-CLOSE: confirm that the user wants to exit. 
-		case CTRL_CLOSE_EVENT:
-		// Handle the CTRL-C signal. 
-		case CTRL_C_EVENT:
-			SendMessageA((HWND)libPvr_GetRenderTarget(),WM_CLOSE,0,0); //FIXEM
-			return( TRUE );
-		default: 
-			return FALSE;
-	} 
-} 
-
-
-void os_SetWindowText(const char* text)
+FILE *fopen(char const *file_name, char const *mode)
 {
-	if (GetWindowLong((HWND)libPvr_GetRenderTarget(),GWL_STYLE)&WS_BORDER)
+	wstackstring wname;
+	if (!wname.convert(file_name))
 	{
-		SetWindowText((HWND)libPvr_GetRenderTarget(), text);
+		errno = EINVAL;
+		return nullptr;
 	}
-}
-
-void os_MakeExecutable(void* ptr, u32 sz)
-{
-	DWORD old;
-	VirtualProtect(ptr,sizeof(sz),PAGE_EXECUTE_READWRITE,&old);
-}
-
-
-u64 cycl_glob;
-cResetEvent evt_hld(false,true);
-
-
-double speed_load_mspdf;
-extern double full_rps;
-
-void os_wait_cycl(u32 cycl)
-{
-	if (cycl>8*1000*1000)
-		cycl=8*1000*1000;
-
-	
-	static double trolol=os_GetSeconds();
-
-	double newt=os_GetSeconds();
-	double ets=(newt-trolol)*200*1000*1000;
-
-	bool fast_enough=ets < cycl;
-	
-	bool wait = full_rps >5 && (fast_enough || os_IsAudioBufferedLots());
-
-	speed_load_mspdf=(speed_load_mspdf*0.96235 + ets/cycl*10)/1.96235;
-
-	if (wait &&  os_IsAudioBuffered())
+	DWORD dwDesiredAccess;
+	DWORD dwCreationDisposition;
+	int openFlags = 0;
+	if (strchr(mode, '+') != nullptr)
+		dwDesiredAccess = GENERIC_READ | GENERIC_WRITE;
+	else if (strchr(mode, 'r') != nullptr)
 	{
-		while (cycl_glob<cycl && os_IsAudioBuffered())
-			evt_hld.Wait(8);
-
-		if (cycl_glob>cycl)
-			InterlockedExchangeSubtract(&cycl_glob,cycl);
-	}
-	else //if (os_IsAudioBufferedLots())
-	{
-		//cycl_glob=0;
-	}
-
-
-	static int last_fe=fast_enough;
-	if (!fast_enough || !last_fe)
-		printf("Speed %.2f (%.2f%%) (%d)\n",ets/cycl*10,cycl/ets*100,os_getusedSamples());
-	
-	last_fe=fast_enough;
-
-
-
-	trolol=os_GetSeconds();
-}
-
-
-void os_consume(double t)
-{
-	double cyc=t*190*1000*1000;
-
-	if ((cycl_glob+cyc)<10*1000*1000)
-	{
-		InterlockedExchangeAdd(&cycl_glob,cyc);
+		openFlags |= _O_RDONLY;
+		dwDesiredAccess = GENERIC_READ;
 	}
 	else
+		dwDesiredAccess = GENERIC_WRITE;
+	if (strchr(mode, 'w') != nullptr)
+		dwCreationDisposition = CREATE_ALWAYS;
+	else if (strchr(mode, 'a') != nullptr)
 	{
-		cycl_glob=10*1000*1000;
+		dwCreationDisposition = OPEN_ALWAYS;
+		openFlags |= _O_APPEND;
+	}
+	else
+		dwCreationDisposition = OPEN_EXISTING;
+	if (strchr(mode, 'b') == nullptr)
+		openFlags |= _O_TEXT;
+
+	HANDLE fileh = CreateFile2FromAppW(wname.get(), dwDesiredAccess, FILE_SHARE_READ, dwCreationDisposition, nullptr);
+	if (fileh == INVALID_HANDLE_VALUE)
+		return nullptr;
+
+	int fd = _open_osfhandle((intptr_t)fileh, openFlags);
+	if (fd == -1)
+	{
+		WARN_LOG(COMMON, "_open_osfhandle failed");
+		CloseHandle(fileh);
+		return nullptr;
 	}
 
-	evt_hld.Set();
+	return _fdopen(fd, mode);
 }
 
-void* tick_th(void* p)
+int remove(char const *name)
 {
-		SetThreadPriority(GetCurrentThread(),THREAD_PRIORITY_TIME_CRITICAL);
-		double old=os_GetSeconds();
-		for(;;)
-		{
-			Sleep(4);
-			double newt=os_GetSeconds();
-			os_consume(newt-old);
-			old=newt;
-		}
+    wstackstring wname;
+    if(!wname.convert(name)) {
+        errno = EINVAL;
+        return -1;
+    }
+    return _wremove(wname.get());
 }
 
-cThread tick_thd(&tick_th,0);
+}
+#endif
 
-int CALLBACK WinMain(HINSTANCE hInstance,HINSTANCE hPrevInstance,LPSTR lpCmdLine,int nCmdShowCmd)
+int main(int argc, char* argv[])
 {
-	tick_thd.Start();
+	nowide::args _(argc, argv);
 
-	int argc=0;
-	wchar* cmd_line=GetCommandLineA();
-	wchar** argv=CommandLineToArgvA(cmd_line,&argc);
-	if(strstr(cmd_line,"NoConsole")==0)
-	{
-		if (AllocConsole())
-		{
-			freopen("CON","w",stdout);
-			freopen("CON","w",stderr);
-			freopen("CON","r",stdin);
-		}
-		SetConsoleCtrlHandler( (PHANDLER_ROUTINE) CtrlHandler, TRUE );
+	WSADATA wsaData;
+	int ret = WSAStartup(MAKEWORD(2, 0), &wsaData);
+	if (ret != 0)
+		fprintf(stderr, "WSAStartup failed. error %x", ret);
+
+#ifdef USE_BREAKPAD
+	wchar_t tempDir[MAX_PATH + 1];
+	GetTempPathW(MAX_PATH + 1, tempDir);
+
+	static google_breakpad::CustomInfoEntry custom_entries[] = {
+			google_breakpad::CustomInfoEntry(L"prod", L"Flycast"),
+			google_breakpad::CustomInfoEntry(L"ver", L"" GIT_VERSION),
+	};
+	google_breakpad::CustomClientInfo custom_info = { custom_entries, std::size(custom_entries) };
+
+	google_breakpad::ExceptionHandler handler(tempDir,
+		nullptr,
+		dumpCallback,
+		nullptr,
+		google_breakpad::ExceptionHandler::HANDLER_ALL,
+		MiniDumpNormal,
+		INVALID_HANDLE_VALUE,
+		&custom_info);
+	// crash on die() and failing verify()
+	handler.set_handle_debug_exceptions(true);
+#endif
+
+#if defined(_WIN32) && defined(LOG_TO_PTY)
+	setbuf(stderr, NULL);
+#endif
+	LogManager::Init();
+	i18n::init();
+
+	reserveBottomMemory();
+	setupPath();
+	findKeyboardLayout();
+
+	if (flycast_init(argc, argv) != 0)
+		die("Flycast initialization failed");
+
+#ifdef USE_BREAKPAD
+	nowide::stackstring nws;
+	static std::string tempDir8;
+	if (nws.convert(tempDir))
+		tempDir8 = nws.get();
+	auto async = std::async(std::launch::async, uploadCrashes, tempDir8);
+#endif
+
+#ifdef TARGET_UWP
+	if (config::ContentPath.get().empty())
+		config::ContentPath.get().push_back(get_writable_config_path(""));
+#endif
+	os_InstallFaultHandler();
+
+	try {
+		mainui_loop();
+	} catch (const std::exception& e) {
+		ERROR_LOG(BOOT, "mainui_loop error: %s", e.what());
+#ifndef TARGET_UWP
+#ifdef OT_LEAN_RUNTIME
+		MessageBox(GetActiveWindow(), "Project OT Runtime Error", e.what(), MB_ICONSTOP | MB_OK);
+#else
+		MessageBox(NULL, i18n::T("Flycast Error"), e.what(), MB_ICONSTOP | MB_OK);
+#endif
+#endif
+	} catch (...) {
+		ERROR_LOG(BOOT, "mainui_loop unknown exception");
 	}
 
-	SetupPath();
-
-	__try
-	{	
-		int dc_init(int argc,wchar* argv[]);
-		void dc_run();
-		void dc_term();
-		dc_init(argc,argv);
-		dc_run();
-		dc_term();
-	}
-	__except( (EXCEPTION_CONTINUE_EXECUTION==ExeptionHandler( GetExceptionCode(), (GetExceptionInformation()))) ? EXCEPTION_CONTINUE_EXECUTION : EXCEPTION_CONTINUE_SEARCH )
-	{
-		printf("Unhandled exception - Emulation thread halted...\n");
-	}
+	flycast_term();
+	os_UninstallFaultHandler();
+	WSACleanup();
 
 	return 0;
 }
 
-
-	
-LARGE_INTEGER qpf;
-double  qpfd;
-//Helper functions
-double os_GetSeconds()
+[[noreturn]] void os_DebugBreak()
 {
-	static bool initme = (QueryPerformanceFrequency(&qpf), qpfd=1/(double)qpf.QuadPart);
-	LARGE_INTEGER time_now;
-
-	QueryPerformanceCounter(&time_now);
-	return time_now.QuadPart*qpfd;
+	__debugbreak();
+	std::abort();
 }
-
-//#include "plugins/plugin_manager.h"
 
 void os_DoEvents()
 {
+	FC_PROFILE_SCOPE;
+
+#ifndef TARGET_UWP
 	MSG msg;
 	while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE))
 	{
 		// If the message is WM_QUIT, exit the while loop
 		if (msg.message == WM_QUIT)
 		{
-			sh4_cpu.Stop();
+			dc_exit();
 		}
 
 		// Translate the message and dispatch it to WindowProc()
 		TranslateMessage(&msg);
 		DispatchMessage(&msg);
 	}
+#endif
 }
 
+void os_RunInstance(int argc, const char *argv[])
+{
+	wchar_t exePath[MAX_PATH];
+	GetModuleFileNameW(NULL, exePath, std::size(exePath));
 
+	std::wstring cmdLine = L'"' + std::wstring(exePath) + L'"';
+	for (int i = 0; i < argc; i++)
+	{
+		nowide::wstackstring wname;
+		if (!wname.convert(argv[i])) {
+			WARN_LOG(BOOT, "Invalid argument: %s", argv[i]);
+			continue;
+		}
+		cmdLine += L" \"";
+		for (wchar_t *p = wname.get(); *p != L'\0'; p++)
+		{
+			if (*p == L'"')
+				// escape double quote
+				cmdLine += L'\\';
+			cmdLine += *p;
+		}
+		cmdLine += L'"';
+	}
 
+	STARTUPINFOW startupInfo{};
+	startupInfo.cb = sizeof(startupInfo);
 
-//Windoze Code implementation of commong classes from here and after ..
-
-//Thread class
-cThread::cThread(ThreadEntryFP* function,void* prm)
-{
-	Entry=function;
-	param=prm;
+	PROCESS_INFORMATION processInfo{};
+	BOOL rc = CreateProcessW(exePath, (wchar_t *)cmdLine.c_str(), nullptr, nullptr, true, 0, nullptr, nullptr, &startupInfo, &processInfo);
+	if (rc)
+	{
+		CloseHandle(processInfo.hProcess);
+		CloseHandle(processInfo.hThread);
+	}
+	else
+	{
+		WARN_LOG(BOOT, "Cannot launch Flycast instance: error %d", GetLastError());
+	}
 }
 
-	
-void cThread::Start()
+static WinLibLoader kernelBaseLib("KernelBase.dll");
+
+void os_SetThreadName(const char *name)
 {
-	hThread=CreateThread(NULL,NULL,(LPTHREAD_START_ROUTINE)Entry,param,0,NULL);
-	ResumeThread(hThread);
+	nowide::wstackstring wname;
+	if (wname.convert(name))
+	{
+		static HRESULT (WINAPI *SetThreadDescription)(HANDLE, PCWSTR) = kernelBaseLib.getFunc("SetThreadDescription", SetThreadDescription);
+		if (SetThreadDescription != nullptr)
+			SetThreadDescription(GetCurrentThread(), wname.get());
+	}
 }
 
-void cThread::WaitToEnd()
+const char *getThreadName()
 {
-	WaitForSingleObject(hThread,INFINITE);
+	static HRESULT (WINAPI *GetThreadDescription)(HANDLE, PWSTR *) = kernelBaseLib.getFunc("GetThreadDescription", GetThreadDescription);
+	if (GetThreadDescription == nullptr)
+		return "?";
+	PWSTR wname = nullptr;
+	if (SUCCEEDED(GetThreadDescription(GetCurrentThread(), &wname)))
+	{
+		nowide::stackstring stname;
+		thread_local std::string name;
+		if (stname.convert(wname))
+			name = stname.get();
+		else
+			name = "?";
+		LocalFree(wname);
+		return name.c_str();
+	}
+	else {
+		return "?";
+	}
 }
-//End thread class
 
-//cResetEvent Calss
-cResetEvent::cResetEvent(bool State,bool Auto)
-{
-		hEvent = CreateEvent( 
-		NULL,             // default security attributes
-		Auto?FALSE:TRUE,  // auto-reset event?
-		State?TRUE:FALSE, // initial state is State
-		NULL			  // unnamed object
-		);
-}
-cResetEvent::~cResetEvent()
-{
-	//Destroy the event object ?
-	 CloseHandle(hEvent);
-}
-void cResetEvent::Set()//Signal
-{
-	SetEvent(hEvent);
-}
-void cResetEvent::Reset()//reset
-{
-	ResetEvent(hEvent);
-}
-void cResetEvent::Wait(u32 msec)//Wait for signal , then reset
-{
-	WaitForSingleObject(hEvent,msec);
-}
-void cResetEvent::Wait()//Wait for signal , then reset
-{
-	WaitForSingleObject(hEvent,(u32)-1);
-}
-//End AutoResetEvent
+#ifdef VIDEO_ROUTING
+#ifndef _MSC_VER
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunknown-pragmas"
+#pragma GCC diagnostic ignored "-Wunused-function"
+#pragma GCC diagnostic ignored "-Wunused-variable"
+#endif
+#include "SpoutSender.h"
+#include "SpoutDX.h"
+#ifndef _MSC_VER
+#pragma GCC diagnostic pop
+#endif
 
-void VArray2::LockRegion(u32 offset,u32 size)
+static SpoutSender* spoutSender;
+static spoutDX* spoutDXSender;
+
+void os_VideoRoutingPublishFrameTexture(GLuint texID, GLuint texTarget, float w, float h)
 {
-	//verify(offset+size<this->size);
-	verify(size!=0);
-	DWORD old;
-	VirtualProtect(((u8*)data)+offset , size, PAGE_READONLY,&old);
+	if (spoutSender == nullptr)
+	{
+		spoutSender = new SpoutSender();
+		int boardID = config::loadInt("naomi", "BoardId");
+		char buf[32] = { 0 };
+		vsnprintf(buf, sizeof(buf), (boardID == 0 ? "Flycast - Video Content" : "Flycast - Video Content - %d"), std::va_list(&boardID));
+		spoutSender->SetSenderName(buf);
+	}	
+	spoutSender->SendTexture(texID, texTarget, w, h, true);
 }
-void VArray2::UnLockRegion(u32 offset,u32 size)
+
+void os_VideoRoutingTermGL()
 {
-	//verify(offset+size<=this->size);
-	verify(size!=0);
-	DWORD old;
-	VirtualProtect(((u8*)data)+offset , size, PAGE_READWRITE,&old);
+	if (spoutSender) 
+	{
+		spoutSender->ReleaseSender();
+		spoutSender = nullptr;
+	}
 }
+
+void os_VideoRoutingPublishFrameTexture(ID3D11Texture2D* pTexture)
+{
+	if (spoutDXSender == nullptr)
+	{
+		spoutDXSender = new spoutDX();
+		ID3D11Resource* resource = nullptr;
+		HRESULT hr = pTexture->QueryInterface(__uuidof(ID3D11Resource), reinterpret_cast<void**>(&resource));
+		if (SUCCEEDED(hr))
+		{
+			ID3D11Device* pDevice = nullptr;
+			resource->GetDevice(&pDevice);
+			resource->Release();
+			spoutDXSender->OpenDirectX11(pDevice);
+			pDevice->Release();
+			int boardID = config::loadInt("naomi", "BoardId");
+			char buf[32] = { 0 };
+			vsnprintf(buf, sizeof(buf), (boardID == 0 ? "Flycast - Video Content" : "Flycast - Video Content - %d"), std::va_list(&boardID));
+			spoutDXSender->SetSenderName(buf);
+		}
+		else
+		{
+			return;
+		}
+	}
+	spoutDXSender->SendTexture(pTexture);
+}
+
+void os_VideoRoutingTermDX()
+{
+	if (spoutDXSender)
+	{
+		spoutDXSender->ReleaseSender();
+		spoutDXSender = nullptr;
+	}
+}
+#endif

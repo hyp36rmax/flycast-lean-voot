@@ -1,439 +1,532 @@
+#include "glcache.h"
 #include "gles.h"
-#include "rend/TexCache.h"
 #include "hw/pvr/pvr_mem.h"
 
-/*
-Textures
+#include <memory>
 
-Textures are converted to native OpenGL textures
-The mapping is done with tcw:tsp -> GL texture. That includes stuff like
-filtering/ texture repeat
+GlTextureCache TexCache;
+void (TextureCacheData::*TextureCacheData::uploadToGpu)(int, int, const u8 *, bool, bool) = &TextureCacheData::UploadToGPUGl2;
 
-To save space native formats are used for 1555/565/4444 (only bit shuffling is done)
-YUV is converted to 565 (some loss of quality on that)
-PALs are decoded to their unpaletted format, 8888 is downcasted to 4444
-
-Mipmaps
-	not supported for now
-
-Compression
-	look into it, but afaik PVRC is not realtime doable
-*/
-
-u16 temp_tex_buffer[1024*1024];
-
-typedef void TexConvFP(PixelBuffer* pb,u8* p_in,u32 Width,u32 Height);
-
-struct PvrTexInfo
+static void getOpenGLTexParams(TextureType texType, u32& bytesPerPixel, GLuint& gltype, GLuint& comps, GLuint& internalFormat)
 {
-	const char* name;
-	int bpp;        //4/8 for pal. 16 for uv, argb
-	GLuint type;
-	TexConvFP *PL;
-	TexConvFP *TW;
-	TexConvFP *VQ;
-};
-
-PvrTexInfo format[8]=
-{
-	{"1555", 16,GL_UNSIGNED_SHORT_5_5_5_1, &tex1555_PL,&tex1555_TW,&tex1555_VQ},	//1555
-	{"565", 16,GL_UNSIGNED_SHORT_5_6_5,    &tex565_PL,&tex565_TW,&tex565_VQ},		//565
-	{"4444", 16,GL_UNSIGNED_SHORT_4_4_4_4, &tex4444_PL,&tex4444_TW,&tex4444_VQ},	//4444
-	{"yuv", 16,GL_UNSIGNED_SHORT_5_6_5,    &texYUV422_PL,&texYUV422_TW,&texYUV422_VQ},	//yuv
-	{"UNSUPPORTED BUMP MAPPED POLY", 16,GL_UNSIGNED_SHORT_4_4_4_4,&texBMP_PL,&texBMP_TW,&texBMP_VQ},	//bump_ns
-	{"pal4", 4,0,0,texPAL4_TW,0},	//pal4
-	{"pla8", 8,0,0,texPAL8_TW,0},	//pal8
-	{"ns/1555", 0},	//ns, 1555
-};
-
-const u32 MipPoint[8] =
-{
-	0x00006,//8
-	0x00016,//16
-	0x00056,//32
-	0x00156,//64
-	0x00556,//128
-	0x01556,//256
-	0x05556,//512
-	0x15556//1024
-};
-
-const GLuint PAL_TYPE[4]=
-{GL_UNSIGNED_SHORT_5_5_5_1,GL_UNSIGNED_SHORT_5_6_5,GL_UNSIGNED_SHORT_4_4_4_4,GL_UNSIGNED_SHORT_4_4_4_4};
-
-
-//Texture Cache :)
-struct TextureCacheData
-{
-	TSP tsp;        //dreamcast texture parameters
-	TCW tcw;
-
-	GLuint texID;   //gl texture
-
-	//decoded texture info
-	u32 sa;         //data start address in vram
-	u32 w,h;        //width & height of the texture
-	u32 size;       //size, in bytes, in vram
-
-	PvrTexInfo* tex;
-	TexConvFP*  texconv;
-
-	bool dirty;
-	vram_block* lock_block;
-
-	u32 Lookups;
-	u32 Updates;
-
-	//used for palette updates
-	u32  pal_local_rev;         //local palette rev
-	u32* pal_table_rev;         //table palette rev pointer
-	u32  indirect_color_ptr;    //palette color table index for pal. tex
-	                            //VQ quantizers table for VQ tex
-	                            //a texture can't be both VQ and PAL at the same time
-
-	void PrintTextureName()
+	comps = GL_RGBA;
+	bytesPerPixel = 2;
+	switch (texType)
 	{
-		printf("Texture: %s ",tex?tex->name:"?format?");
-
-		if (tcw.VQ_Comp)
-			printf(" VQ");
-
-		if (tcw.ScanOrder==0)
-			printf(" TW");
-
-		if (tcw.MipMapped)
-			printf(" MM");
-
-		if (tcw.StrideSel)
-			printf(" Stride");
-
-		printf(" %dx%d @ 0x%X",8<<tsp.TexU,8<<tsp.TexV,tcw.TexAddr<<3);
-		printf("\n");
+	case TextureType::_5551:
+		gltype = GL_UNSIGNED_SHORT_5_5_5_1;
+		internalFormat = GL_RGB5_A1;
+		break;
+	case TextureType::_565:
+		gltype = GL_UNSIGNED_SHORT_5_6_5;
+		comps = GL_RGB;
+		internalFormat = GL_RGB565;
+		break;
+	case TextureType::_4444:
+		gltype = GL_UNSIGNED_SHORT_4_4_4_4;
+		internalFormat = GL_RGBA4;
+		break;
+	case TextureType::_8888:
+		bytesPerPixel = 4;
+		gltype = GL_UNSIGNED_BYTE;
+		internalFormat = GL_RGBA8;
+		break;
+	case TextureType::_8:
+		bytesPerPixel = 1;
+		gltype = GL_UNSIGNED_BYTE;
+		comps = gl.single_channel_format;
+		internalFormat = GL_R8;
+		break;
+	default:
+		die("Unsupported texture type");
+		break;
 	}
-
-	void SetRepeatMode(GLuint dir,u32 clamp,u32 mirror)
-	{
-		if (clamp)
-			glTexParameteri (GL_TEXTURE_2D, dir, GL_CLAMP_TO_EDGE);
-		else 
-			glTexParameteri (GL_TEXTURE_2D, dir, mirror?GL_MIRRORED_REPEAT : GL_REPEAT);
-	}
-
-	//Create GL texture from tsp/tcw
-	void Create()
-	{
-		//ask GL for texture ID
-		glGenTextures(1,&texID);
-
-		//Reset state info ..
-		Lookups=0;
-		Updates=0;
-		dirty=true;
-		lock_block=0;
-
-		//decode info from tsp/tcw into the texture struct
-		tex=&format[tcw.PixelFmt==7?0:tcw.PixelFmt];		//texture format table entry
-
-		sa=(tcw.TexAddr<<3) & VRAM_MASK; //data start address
-		w=8<<tsp.TexU;                   //tex width
-		h=8<<tsp.TexV;                   //tex height
-
-		//bind texture to set modes
-		glBindTexture(GL_TEXTURE_2D,texID);
-
-		//set texture repeat mode
-		SetRepeatMode(GL_TEXTURE_WRAP_S,tsp.ClampU,tsp.FlipU); // glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, (tsp.ClampU ? GL_CLAMP_TO_EDGE : (tsp.FlipU ? GL_MIRRORED_REPEAT : GL_REPEAT))) ;
-		SetRepeatMode(GL_TEXTURE_WRAP_T,tsp.ClampV,tsp.FlipV); // glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, (tsp.ClampV ? GL_CLAMP_TO_EDGE : (tsp.FlipV ? GL_MIRRORED_REPEAT : GL_REPEAT))) ;
-
-		glHint(GL_GENERATE_MIPMAP_HINT, GL_NICEST);
-
-		//set texture filter mode
-		if ( tsp.FilterMode == 0 )
-		{
-			//disable filtering, mipmaps
-			glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
-			glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
-		}
-		else
-		{
-			//bilinear filtering
-			//PowerVR supports also trilinear via two passes, but we ignore that for now
-			glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER, (tcw.MipMapped && settings.rend.UseMipmaps)?GL_LINEAR_MIPMAP_NEAREST:GL_LINEAR);
-			glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_LINEAR);
-		}
-
-		//PAL texture
-		if (tex->bpp==4)
-		{
-			pal_table_rev=&pal_rev_16[tcw.PalSelect];
-			indirect_color_ptr=tcw.PalSelect<<4;
-		}
-		else if (tex->bpp==8)
-		{
-			pal_table_rev=&pal_rev_256[tcw.PalSelect>>4];
-			indirect_color_ptr=(tcw.PalSelect>>4)<<8;
-		}
-		else
-		{
-			pal_table_rev=0;
-		}
-
-		//VQ table (if VQ tex)
-		if (tcw.VQ_Comp)
-			indirect_color_ptr=sa;
-
-			//Convert a pvr texture into OpenGL
-		switch (tcw.PixelFmt)
-		{
-
-		case 0: //0     1555 value: 1 bit; RGB values: 5 bits each
-		case 7: //7     Reserved        Regarded as 1555
-		case 1: //1     565      R value: 5 bits; G value: 6 bits; B value: 5 bits
-		case 2: //2     4444 value: 4 bits; RGB values: 4 bits each
-		case 3: //3     YUV422 32 bits per 2 pixels; YUYV values: 8 bits each
-		case 4: //4    -NOT_PROPERLY SUPPORTED- Bump Map        16 bits/pixel; S value: 8 bits; R value: 8 bits -NOT_PROPERLY SUPPORTED-
-		case 5: //5     4 BPP Palette   Palette texture with 4 bits/pixel
-		case 6: //6     8 BPP Palette   Palette texture with 8 bits/pixel
-			if (tcw.ScanOrder && tex->PL)
-			{
-				//Texture is stored 'planar' in memory, no deswizzle is needed
-				verify(tcw.VQ_Comp==0);
-				//Planar textures support stride selection, mostly used for non power of 2 textures (videos)
-				int stride=w;
-				if (tcw.StrideSel) 
-					stride=(TEXT_CONTROL&31)*32;
-				//Call the format specific conversion code
-				texconv=tex->PL;
-				//calculate the size, in bytes, for the locking
-				size=w*h*tex->bpp/8;
-			}
-			else
-			{
-				verify(w==h || !tcw.MipMapped); // are non square mipmaps supported ? i can't recall right now *WARN*
-
-				if (tcw.VQ_Comp)
-				{
-					verify(tex->VQ!=0);
-					indirect_color_ptr=sa;
-					if (tcw.MipMapped)
-						sa+=MipPoint[tsp.TexU];
-					texconv=tex->VQ;
-					size=w*h/8;
-				}
-				else
-				{
-					verify(tex->TW!=0)
-					if (tcw.MipMapped)
-						sa+=MipPoint[tsp.TexU]*tex->bpp/2;
-					texconv=tex->TW;
-					size=w*h*tex->bpp/8;
-				}
-			}
-			break;
-		default:
-			printf("Unhandled texture %d\n",tcw.PixelFmt);
-			size=w*h*2;
-			memset(temp_tex_buffer,0xFFFFFFFF,size);
-			texconv=0;
-		}
-	}
-
-	void Update()
-	{
-		//texture state tracking stuff
-		Updates++;
-		dirty=false;
-
-		GLuint textype=tex->type;
-
-		if (pal_table_rev) 
-		{
-			textype=PAL_TYPE[PAL_RAM_CTRL&3];
-			pal_local_rev=*pal_table_rev; //make sure to update the local rev, so it won't have to redo the tex
-		}
-
-		palette_index=indirect_color_ptr; //might be used if pal. tex
-		vq_codebook=(u8*)&vram[indirect_color_ptr];  //might be used if VQ tex
-
-		//texture conversion work
-		PixelBuffer pbt;
-		pbt.p_buffer_start=pbt.p_current_line=temp_tex_buffer;
-		pbt.pixels_per_line=w;
-
-		u32 stride=w;
-
-		if (tcw.StrideSel && tcw.ScanOrder && tex->PL) 
-			stride=(TEXT_CONTROL&31)*32; //I think this needs +1 ?
-
-		if(texconv!=0)
-		{
-			texconv(&pbt,(u8*)&vram[sa],stride,h);
-		}
-		else
-		{
-			//fill it in with a temp color
-			printf("UNHANDLED TEXTURE\n");
-			memset(temp_tex_buffer,0xF88F8F7F,w*h*2);
-		}
-
-		//PrintTextureName();
-
-		//lock the texture to detect changes in it
-		lock_block = libCore_vramlock_Lock(sa,sa+size-1,this);
-
-		//upload to OpenGL !
-		glBindTexture(GL_TEXTURE_2D, texID);
-		GLuint comps=textype==GL_UNSIGNED_SHORT_5_6_5?GL_RGB:GL_RGBA;
-		glTexImage2D(GL_TEXTURE_2D, 0,comps , w, h, 0, comps, textype, temp_tex_buffer);
-
-		if (tcw.MipMapped && settings.rend.UseMipmaps)
-			glGenerateMipmap(GL_TEXTURE_2D);
-	}
-
-	//true if : dirty or paletted texture and revs don't match
-	bool NeedsUpdate() { return (dirty) || (pal_table_rev!=0 && *pal_table_rev!=pal_local_rev); }
-	
-	void Delete()
-	{
-		glDeleteTextures(1,&texID);
-		if (lock_block)
-			libCore_vramlock_Unlock_block(lock_block);
-		lock_block=0;
-	}
-};
-
-#include <map>
-map<u64,TextureCacheData> TexCache;
-typedef map<u64,TextureCacheData>::iterator TexCacheIter;
-
-//TexCacheList<TextureCacheData> TexCache;
-
-struct FBT
-{
-	u32 TexAddr;
-	GLuint depthb,stencilb;
-	GLuint tex;
-	GLuint fbo;
-};
-
-FBT fb_rtt;
-
-void BindRTT(u32 addy, u32 fbw, u32 fbh, u32 channels, u32 fmt)
-{
-	FBT& rv=fb_rtt;
-
-	if (rv.fbo) glDeleteFramebuffers(1,&rv.fbo);
-	if (rv.tex) glDeleteTextures(1,&rv.tex);
-	if (rv.depthb) glDeleteRenderbuffers(1,&rv.depthb);
-	if (rv.stencilb) glDeleteRenderbuffers(1,&rv.stencilb);
-
-	rv.TexAddr=addy>>3;
-
-	// Find the largest square power of two texture that fits into the viewport
-
-	// Get the currently bound frame buffer object. On most platforms this just gives 0.
-	//glGetIntegerv(GL_FRAMEBUFFER_BINDING, &m_i32OriginalFbo);
-
-	// Generate and bind a render buffer which will become a depth buffer shared between our two FBOs
-	glGenRenderbuffers(1, &rv.depthb);
-	glBindRenderbuffer(GL_RENDERBUFFER, rv.depthb);
-
-	/*
-		Currently it is unknown to GL that we want our new render buffer to be a depth buffer.
-		glRenderbufferStorage will fix this and in this case will allocate a depth buffer
-		m_i32TexSize by m_i32TexSize.
-	*/
-
-	glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24_OES, fbw, fbh);
-
-	glGenRenderbuffers(1, &rv.stencilb);
-	glBindRenderbuffer(GL_RENDERBUFFER, rv.stencilb);
-	glRenderbufferStorage(GL_RENDERBUFFER, GL_STENCIL_INDEX8, fbw, fbh);
-
-	// Create a texture for rendering to
-	glGenTextures(1, &rv.tex);
-	glBindTexture(GL_TEXTURE_2D, rv.tex);
-
-	glTexImage2D(GL_TEXTURE_2D, 0, channels, fbw, fbh, 0, channels, fmt, 0);
-
-	glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-	glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-	glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-	glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-
-	// Create the object that will allow us to render to the aforementioned texture
-	glGenFramebuffers(1, &rv.fbo);
-	glBindFramebuffer(GL_FRAMEBUFFER, rv.fbo);
-
-	// Attach the texture to the FBO
-	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, rv.tex, 0);
-
-	// Attach the depth buffer we created earlier to our FBO.
-	glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, rv.depthb);
-
-	// Check that our FBO creation was successful
-	GLuint uStatus = glCheckFramebufferStatus(GL_FRAMEBUFFER);
-
-	verify(uStatus == GL_FRAMEBUFFER_COMPLETE);
 }
 
-GLuint GetTexture(TSP tsp,TCW tcw)
+void TextureCacheData::UploadToGPUGl2(int width, int height, const u8 *temp_tex_buffer, bool mipmapped, bool mipmapsIncluded)
 {
-	if (tcw.TexAddr==fb_rtt.TexAddr && fb_rtt.tex)
+	if (texID == 0)
+		texID = glcache.GenTexture();
+	glcache.BindTexture(GL_TEXTURE_2D, texID);
+	GLuint comps;
+	GLuint gltype;
+	GLuint internalFormat;
+	u32 bytes_per_pixel;
+	getOpenGLTexParams(tex_type, bytes_per_pixel, gltype, comps, internalFormat);
+
+	if (mipmapsIncluded)
 	{
-		return fb_rtt.tex;
+		int mipmapLevels = 0;
+		int dim = width;
+		while (dim != 0) {
+			mipmapLevels++;
+			dim >>= 1;
+		}
+		for (int i = 0; i < mipmapLevels; i++) {
+			glTexImage2D(GL_TEXTURE_2D, mipmapLevels - i - 1, comps, 1 << i, 1 << i, 0, comps, gltype, temp_tex_buffer);
+			temp_tex_buffer += (1 << (2 * i)) * bytes_per_pixel;
+		}
+	}
+	else
+	{
+		glTexImage2D(GL_TEXTURE_2D, 0,comps, width, height, 0, comps, gltype, temp_tex_buffer);
+		if (mipmapped)
+			glGenerateMipmap(GL_TEXTURE_2D);
+	}
+}
+
+void TextureCacheData::UploadToGPUGl4(int width, int height, const u8 *temp_tex_buffer, bool mipmapped, bool mipmapsIncluded)
+{
+#if !defined(GLES2) && (!defined(__APPLE__) || defined(TARGET_IPHONE))
+	GLuint comps;
+	GLuint gltype;
+	GLuint internalFormat;
+	u32 bytes_per_pixel;
+	getOpenGLTexParams(tex_type, bytes_per_pixel, gltype, comps, internalFormat);
+
+	int mipmapLevels = 1;
+	if (mipmapped)
+	{
+		mipmapLevels = 0;
+		int dim = width;
+		while (dim != 0) {
+			mipmapLevels++;
+			dim >>= 1;
+		}
+	}
+	if (texID == 0)
+	{
+		texID = glcache.GenTexture();
+		glcache.BindTexture(GL_TEXTURE_2D, texID);
+		glTexStorage2D(GL_TEXTURE_2D, mipmapLevels, internalFormat, width, height);
+	}
+	else {
+		glcache.BindTexture(GL_TEXTURE_2D, texID);
+	}
+	if (mipmapsIncluded)
+	{
+		for (int i = 0; i < mipmapLevels; i++) {
+			glTexSubImage2D(GL_TEXTURE_2D, mipmapLevels - i - 1, 0, 0, 1 << i, 1 << i, comps, gltype, temp_tex_buffer);
+			temp_tex_buffer += (1 << (2 * i)) * bytes_per_pixel;
+		}
+	}
+	else
+	{
+		glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, comps, gltype, temp_tex_buffer);
+		if (mipmapped)
+			glGenerateMipmap(GL_TEXTURE_2D);
+	}
+#endif
+}
+
+void TextureCacheData::UploadToGPU(int width, int height, const u8 *temp_tex_buffer, bool mipmapped, bool mipmapsIncluded)
+{
+	((*this).*uploadToGpu)(width, height, temp_tex_buffer, mipmapped, mipmapsIncluded);
+	glCheck();
+}
+	
+void TextureCacheData::setUploadToGPUFlavor()
+{
+#if !defined(GLES2) && (!defined(__APPLE__) || defined(TARGET_IPHONE))
+	// OpenGL 4.2 or GLES 3.0 min
+	if (gl.gl_major > 4 || (gl.gl_major == 4 && gl.gl_minor >= 2)
+			|| (gl.is_gles && gl.gl_major >= 3))
+		uploadToGpu = &TextureCacheData::UploadToGPUGl4;
+#endif
+}
+
+bool TextureCacheData::Delete()
+{
+	if (!BaseTextureCacheData::Delete())
+		return false;
+
+	if (texID != 0) {
+		glcache.DeleteTextures(1, &texID);
+		texID = 0;
 	}
 
+	return true;
+}
+
+GLuint BindRTT(bool withDepthBuffer)
+{
+	GLenum channels, format;
+	switch(gl.rendContext->fb_W_CTRL.fb_packmode)
+	{
+	case 0: //0x0   0555 KRGB 16 bit  (default)	Bit 15 is the value of fb_kval[7].
+		channels = GL_RGBA;
+		format = GL_UNSIGNED_BYTE;
+		break;
+
+	case 1: //0x1   565 RGB 16 bit
+		channels = GL_RGB;
+		format = GL_UNSIGNED_SHORT_5_6_5;
+		break;
+
+	case 2: //0x2   4444 ARGB 16 bit
+		channels = GL_RGBA;
+		format = GL_UNSIGNED_BYTE;
+		break;
+
+	case 3://0x3    1555 ARGB 16 bit    The alpha value is determined by comparison with the value of fb_alpha_threshold.
+		channels = GL_RGBA;
+		format = GL_UNSIGNED_BYTE;
+		break;
+
+	case 4: //0x4   888 RGB 24 bit packed
+	case 5: //0x5   0888 KRGB 32 bit    K is the value of fk_kval.
+	case 6: //0x6   8888 ARGB 32 bit
+		WARN_LOG(RENDERER, "Unsupported render to texture format: %d", gl.rendContext->fb_W_CTRL.fb_packmode);
+		return 0;
+
+	case 7: //7     invalid
+		WARN_LOG(RENDERER, "Invalid framebuffer format: 7");
+		return 0;
+	}
+	u32 fbw = gl.rendContext->framebufferWidth;
+	u32 fbh = gl.rendContext->framebufferHeight;
+	u32 texAddress = gl.rendContext->fb_W_SOF1 & VRAM_MASK;
+	DEBUG_LOG(RENDERER, "RTT packmode=%d stride=%d - %d x %d @ %06x", gl.rendContext->fb_W_CTRL.fb_packmode, gl.rendContext->fb_W_LINESTRIDE * 8,
+			fbw, fbh, texAddress);
+
+	gl.rtt.framebuffer.reset();
+
+	// Create a texture for rendering to
+	GLuint texture = glcache.GenTexture();
+	glcache.BindTexture(GL_TEXTURE_2D, texture);
+	glTexImage2D(GL_TEXTURE_2D, 0, channels, fbw, fbh, 0, channels, format, 0);
+
+	gl.rtt.framebuffer = std::make_unique<GlFramebuffer>((int)fbw, (int)fbh, withDepthBuffer, texture);
+
+	glViewport(0, 0, fbw, fbh);
+
+	return gl.rtt.framebuffer->getFramebuffer();
+}
+
+void ReadRTTBuffer()
+{
+	u32 w = gl.rendContext->framebufferWidth;
+	u32 h = gl.rendContext->framebufferHeight;
+
+	const u8 fb_packmode = gl.rendContext->fb_W_CTRL.fb_packmode;
+	const u32 tex_addr = gl.rendContext->fb_W_SOF1 & VRAM_MASK;
+
+	if (config::RenderToTextureBuffer)
+	{
+#ifdef TARGET_VIDEOCORE
+		// Remove all vram locks before calling glReadPixels
+		// (deadlock on rpi)
+		u32 size = w * h * 2;
+		u32 page_tex_addr = tex_addr & ~PAGE_MASK;
+		u32 page_size = size + tex_addr - page_tex_addr;
+		page_size = ((page_size - 1) / PAGE_SIZE + 1) * PAGE_SIZE;
+		for (u32 page = page_tex_addr; page < page_tex_addr + page_size; page += PAGE_SIZE)
+			VramLockedWriteOffset(page);
+#endif
+
+		glPixelStorei(GL_PACK_ALIGNMENT, 1);
+
+		u16 *dst = (u16 *)&vram[tex_addr];
+
+		u32 linestride = gl.rendContext->fb_W_LINESTRIDE * 8;
+		if (linestride == 0)
+			linestride = w * 2;
+
+		GLint color_fmt, color_type;
+		glGetIntegerv(GL_IMPLEMENTATION_COLOR_READ_FORMAT, &color_fmt);
+		glGetIntegerv(GL_IMPLEMENTATION_COLOR_READ_TYPE, &color_type);
+
+		if (fb_packmode == 1
+				&& linestride == w * 2
+				&& color_fmt == GL_RGB
+				&& color_type == GL_UNSIGNED_SHORT_5_6_5
+				&& gl.rendContext->fbClip.origin.x == 0
+				&& gl.rendContext->fbClip.origin.y == 0
+				&& gl.rendContext->fbClip.size.x >= (int)w
+				&& gl.rendContext->fbClip.size.y >= (int)h)
+		{
+			glReadPixels(0, 0, w, h, GL_RGB, GL_UNSIGNED_SHORT_5_6_5, dst);
+		}
+		else
+		{
+			PixelBuffer<u32> tmp_buf;
+			tmp_buf.init(w, h);
+
+			u8 *p = (u8 *)tmp_buf.data();
+			glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, p);
+
+			WriteTextureToVRam(w, h, p, dst, gl.rendContext->fb_W_CTRL, linestride, gl.rendContext->fbClip);
+		}
+		glCheck();
+	}
+	else
+	{
+		//memset(&vram[tex_addr], 0, size);
+		int wpo2, hpo2;
+		getPvrFramebufferSize(*gl.rendContext, wpo2, hpo2);
+		if (wpo2 <= 1024 && hpo2 <= 1024)
+		{
+			TextureCacheData *texture_data = TexCache.getRTTexture(tex_addr, fb_packmode, wpo2, hpo2);
+			glcache.DeleteTextures(1, &texture_data->texID);
+			texture_data->texID = gl.rtt.framebuffer->detachTexture();
+			texture_data->dirty = 0;
+			texture_data->unprotectVRam();
+		}
+	}
+	glBindFramebuffer(GL_FRAMEBUFFER, gl.ofbo.origFbo);
+}
+
+BaseTextureCacheData *OpenGLRenderer::GetTexture(TSP tsp, TCW tcw, int area)
+{
 	//lookup texture
-	TextureCacheData* tf;
-	//= TexCache.Find(tcw.full,tsp.full);
-	u64 key=((u64)tcw.full<<32) | tsp.full;
-
-	TexCacheIter tx=TexCache.find(key);
-
-	if (tx!=TexCache.end())
-	{
-		tf=&tx->second;
-	}
-	else //create if not existing
-	{
-		TextureCacheData tfc={0};
-		TexCache[key]=tfc;
-
-		tx=TexCache.find(key);
-		tf=&tx->second;
-
-		tf->tsp=tsp;
-		tf->tcw=tcw;
-		tf->Create();
-	}
+	TextureCacheData* tf = TexCache.getTextureCacheData(tsp, tcw, area);
 
 	//update if needed
 	if (tf->NeedsUpdate())
-		tf->Update();
-
-	//update state for opts/stuff
-	tf->Lookups++;
-
-	//return gl texture
-	return tf->texID;
-}
-
-void killtex()
-{
-	for (TexCacheIter i=TexCache.begin();i!=TexCache.end();i++)
 	{
-		i->second.Delete();
+		if (!tf->Update())
+			tf = nullptr;
+	}
+	else if (tf->IsCustomTextureAvailable())
+	{
+		TexCache.DeleteLater(tf->texID);
+		tf->texID = 0;
+		tf->CheckCustomTexture();
 	}
 
-	TexCache.clear();
+	return tf;
 }
 
-void rend_text_invl(vram_block* bl)
+void glReadFramebuffer(const FramebufferInfo& info)
 {
-	TextureCacheData* tcd = (TextureCacheData*)bl->userdata;
-	tcd->dirty=true;
-	tcd->lock_block=0;
+	PixelBuffer<u32> pb;
+	ReadFramebuffer(info, pb, gl.dcfb.width, gl.dcfb.height);
+	
+	if (gl.dcfb.tex == 0)
+		gl.dcfb.tex = glcache.GenTexture();
+	
+	glcache.BindTexture(GL_TEXTURE_2D, gl.dcfb.tex);
+	
+	//set texture repeat mode
+	glcache.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+	glcache.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+	glcache.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	glcache.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, gl.dcfb.width, gl.dcfb.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, pb.data());
+}
 
-	libCore_vramlock_Unlock_block_wb(bl);
+GLuint init_output_framebuffer(int width, int height)
+{
+	if (gl.ofbo.framebuffer != nullptr
+			&& (width != gl.ofbo.framebuffer->getWidth() || height != gl.ofbo.framebuffer->getHeight()))
+	{
+		gl.ofbo.framebuffer.reset();
+	}
+
+	if (gl.ofbo.framebuffer == nullptr)
+	{
+		// Create a texture for rendering to
+		GLuint texture = glcache.GenTexture();
+		glcache.BindTexture(GL_TEXTURE_2D, texture);
+
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, 0);
+		glcache.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+		glcache.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+		glcache.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+		glcache.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+		gl.ofbo.framebuffer = std::make_unique<GlFramebuffer>(width, height, true, texture);
+
+		glcache.Disable(GL_SCISSOR_TEST);
+		glcache.ClearColor(0.f, 0.f, 0.f, 0.f);
+		glClear(GL_COLOR_BUFFER_BIT);
+	}
+	else
+		gl.ofbo.framebuffer->bind();
+
+	glViewport(0, 0, width, height);
+	glCheck();
+
+	return gl.ofbo.framebuffer->getFramebuffer();
+}
+
+GlFramebuffer::GlFramebuffer(int width, int height, bool withDepth, GLuint texture)
+	: width(width), height(height), texture(texture)
+{
+	if (this->texture == 0)
+	{
+		if (gl.gl_major < 3)
+		{
+			// Create a texture for rendering to
+			this->texture = glcache.GenTexture();
+			glcache.BindTexture(GL_TEXTURE_2D, this->texture);
+
+			glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, 0);
+			glcache.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+			glcache.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+			glcache.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+			glcache.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+		}
+		else
+		{
+			// Use a renderbuffer and glBlitFramebuffer
+			glGenRenderbuffers(1, &colorBuffer);
+			glBindRenderbuffer(GL_RENDERBUFFER, colorBuffer);
+			glRenderbufferStorage(GL_RENDERBUFFER, GL_RGBA8, width, height);
+		}
+	}
+	makeFramebuffer(withDepth);
+}
+
+void GlFramebuffer::makeFramebuffer(bool withDepth)
+{
+	// Create the framebuffer
+	glGenFramebuffers(1, &framebuffer);
+	bind();
+
+	if (withDepth)
+	{
+		// Generate and bind a render buffer which will become a depth buffer
+		glGenRenderbuffers(1, &depthBuffer);
+		glBindRenderbuffer(GL_RENDERBUFFER, depthBuffer);
+
+		// Currently it is unknown to GL that we want our new render buffer to be a depth buffer.
+		// glRenderbufferStorage will fix this and will allocate a depth buffer
+		if (gl.is_gles)
+		{
+#if defined(GL_DEPTH24_STENCIL8)
+	        if (gl.gl_major >= 3)
+	            glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, width, height);
+	        else
+#endif
+#if defined(GL_DEPTH24_STENCIL8_OES)
+	        if (gl.GL_OES_packed_depth_stencil_supported)
+	            glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8_OES, width, height);
+	        else
+#endif
+#if defined(GL_DEPTH_COMPONENT24_OES)
+	        if (gl.GL_OES_depth24_supported)
+	            glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24_OES, width, height);
+	        else
+#endif
+				glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT16, width, height);
+		}
+#ifdef GL_DEPTH24_STENCIL8
+		else
+			glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, width, height);
+#endif
+
+		// Attach the depth buffer we just created to our FBO.
+		glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, depthBuffer);
+
+		if (!gl.is_gles || gl.gl_major >= 3 || gl.GL_OES_packed_depth_stencil_supported)
+			glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_STENCIL_ATTACHMENT, GL_RENDERBUFFER, depthBuffer);
+	}
+
+	// Attach the texture/renderbuffer to the FBO
+	if (texture != 0)
+		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture, 0);
+	else
+		glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, colorBuffer);
+}
+
+GlFramebuffer::GlFramebuffer(int width, int height, bool withDepth, bool withTexture)
+	: width(width), height(height), texture(0)
+{
+	if (gl.gl_major < 3 || withTexture)
+	{
+		// Create a texture for rendering to
+		texture = glcache.GenTexture();
+		glcache.BindTexture(GL_TEXTURE_2D, texture);
+
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, 0);
+		glcache.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+		glcache.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+		glcache.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+		glcache.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+	}
+	else
+	{
+		// Use a renderbuffer and glBlitFramebuffer
+		glGenRenderbuffers(1, &colorBuffer);
+		glBindRenderbuffer(GL_RENDERBUFFER, colorBuffer);
+		glRenderbufferStorage(GL_RENDERBUFFER, GL_RGBA8, width, height);
+	}
+
+	makeFramebuffer(withDepth);
+}
+
+GlFramebuffer::~GlFramebuffer()
+{
+	glDeleteFramebuffers(1, &framebuffer);
+	glDeleteRenderbuffers(1, &depthBuffer);
+	glcache.DeleteTextures(1, &texture);
+	glDeleteRenderbuffers(1, &colorBuffer);
+}
+
+bool testBlitFramebuffer()
+{
+#ifdef GLES2
+	return false;
+#else
+	GLint ofbo = 0;
+	glGetIntegerv(GL_FRAMEBUFFER_BINDING, (GLint *)&ofbo);
+
+	GLuint texture = glcache.GenTexture();
+	glcache.BindTexture(GL_TEXTURE_2D, texture);
+
+	u32 data[32 * 32];
+	// Lower half is red
+	for (int i = 0; i < 16 * 32; i++)
+		data[i] = 0xFF0000FF;
+	// Upper half is green
+	for (int i = 16 * 32; i < 32 * 32; i++)
+		data[i] = 0xFF00FF00;   // green
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 32, 32, 0, GL_RGBA, GL_UNSIGNED_BYTE, data);
+	GlFramebuffer src(32, 32, false, texture);
+
+	GlFramebuffer dest(32, 64, false, true);
+
+	src.bind(GL_READ_FRAMEBUFFER);
+	GLenum error = glCheckFramebufferStatus(GL_READ_FRAMEBUFFER);
+	if (error != GL_FRAMEBUFFER_COMPLETE) {
+		WARN_LOG(RENDERER, "testBlitFramebuffer: Source framebuffer error %x", error);
+		return false;
+	}
+	dest.bind(GL_DRAW_FRAMEBUFFER);
+	error = glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER);
+	if (error != GL_FRAMEBUFFER_COMPLETE) {
+		WARN_LOG(RENDERER, "testBlitFramebuffer: Destination framebuffer error %x", error);
+		return false;
+	}
+
+	glcache.Disable(GL_SCISSOR_TEST);
+	glcache.ClearColor(0, 0, 0, 1);
+	glClear(GL_COLOR_BUFFER_BIT);
+	// Apple A8X chokes on negative coordinates
+	// Many mobile GPUs don't support dstY0 > dstY1 and the resulting image is flipped vertically
+	glBlitFramebuffer(0, -1, 32, 31, 0, 64, 32, 0, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+
+	u32 outdata[32 * 64];
+	dest.bind(GL_READ_FRAMEBUFFER);
+	glPixelStorei(GL_PACK_ALIGNMENT, 1);
+	glReadPixels(0, 0, 32, 64, GL_RGBA, GL_UNSIGNED_BYTE, outdata);
+	glBindFramebuffer(GL_FRAMEBUFFER, ofbo);
+	error = glGetError();
+	if (error != GL_NO_ERROR) {
+		WARN_LOG(RENDERER, "testBlitFramebuffer: OpenGL error %x", error);
+		return false;
+	}
+	// Now lower half should be green (except last line due to srcY0 == -1)
+	if (outdata[32 * 2] != 0xFF00FF00) {    // green
+		WARN_LOG(RENDERER, "testBlitFramebuffer: Expected 0xFF00FF00 but was %08x", outdata[0]);
+		return false;
+	}
+	// And upper half should be red
+	if (outdata[31 * 64 - 1] != 0xFF0000FF) {       // red
+		WARN_LOG(RENDERER, "testBlitFramebuffer: Expected 0xFF0000FF but was %08x", outdata[32 * 64 - 1]);
+		return false;
+	}
+	return true;
+#endif
 }

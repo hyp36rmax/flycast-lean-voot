@@ -1,20 +1,33 @@
 #pragma once
 #include "types.h"
+#include "stdclass.h"
 
-extern u32 VREG;
-extern VArray2 aica_ram;
-u32 ReadMem_aica_rtc(u32 addr,u32 sz);
-void WriteMem_aica_rtc(u32 addr,u32 data,u32 sz);
-u32 ReadMem_aica_reg(u32 addr,u32 sz);
-void WriteMem_aica_reg(u32 addr,u32 data,u32 sz);
+namespace aica
+{
 
-void aica_Init();
-void aica_Reset(bool Manual);
-void aica_Term();
+extern RamRegion aica_ram;
+u32 GetRTC_now();
+template<typename T> T readRtcReg(u32 addr);
+template<typename T> void writeRtcReg(u32 addr, T data);
+template<typename T> T readAicaReg(u32 addr);
+template<typename T> void writeAicaReg(u32 addr, T data);
 
-#define UpdateAica(clc) libAICA_Update(clc)
-#define UpdateArm(clc) libARM_Update(clc)
+void init();
+void reset(bool hard);
+void term();
+void timeStep();
+void serialize(Serializer& ser);
+void deserialize(Deserializer& deser);
 
-void aica_sb_Init();
-void aica_sb_Reset(bool Manual);
-void aica_sb_Term();
+void initRtc();
+void resetRtc(bool hard);
+void termRtc();
+
+void setMidiReceiver(void (*handler)(u8 data));
+void midiSend(u8 data);
+
+void sbInit();
+void sbReset(bool hard);
+void sbTerm();
+
+}

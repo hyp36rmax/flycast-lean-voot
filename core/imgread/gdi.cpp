@@ -1,93 +1,161 @@
 #include "common.h"
-#include <ctype.h>
+#include "stdclass.h"
+#include "oslib/storage.h"
+#include "oslib/i18n.h"
+#include <sstream>
 
-Disc* load_gdi(char* file)
+static Disc* load_gdi(const char* file, std::vector<u8> *digest)
 {
-	u32 iso_tc;
-	Disc* disc = new Disc();
-	
-	//memset(&gdi_toc,0xFFFFFFFF,sizeof(gdi_toc));
-	//memset(&gdi_ses,0xFFFFFFFF,sizeof(gdi_ses));
-	FILE* t=fopen(file,"rb");
-	if (!t)
-		return 0;
-	fscanf(t,"%d\r\n",&iso_tc);
-	printf("\nGDI : %d tracks\n",iso_tc);
-
-	char temp[512];
-	char path[512];
-	strcpy(path,file);
-	size_t len=strlen(file);
-	while (len>2)
+	hostfs::File *t = hostfs::storage().openFile(file, "rb");
+	if (t == nullptr)
 	{
-		if (path[len]=='\\' || path[len]=='/')
-			break;
-		len--;
+		WARN_LOG(COMMON, "Cannot open file '%s' errno %d", file, errno);
+		throw FlycastException(strprintf(i18n::T("Cannot open GDI file %s"), file));
 	}
-	len++;
-	char* pathptr=&path[len];
-	u32 TRACK=0,FADS=0,CTRL=0,SSIZE=0;
-	s32 OFFSET=0;
-	for (u32 i=0;i<iso_tc;i++)
+
+	hostfs::FileInfo fileInfo = hostfs::storage().getFileInfo(file);
+	size_t gdi_len = fileInfo.size;
+
+	char gdi_data[16384] {};
+
+	if (gdi_len >= sizeof(gdi_data))
 	{
+		delete t;
+		throw FlycastException(i18n::Ts("GDI file too big"));
+	}
+
+	if (t->read(gdi_data, 1, gdi_len) != gdi_len)
+		WARN_LOG(GDROM, "Failed or truncated read of gdi file '%s'", file);
+	delete t;
+
+	std::istringstream gdi(gdi_data);
+	gdi.imbue(std::locale::classic());
+
+	u32 trackCount = 0;
+	gdi >> trackCount;
+	if (trackCount < 3 || trackCount > 99) {
+		WARN_LOG(GDROM, "Invalid track count: %d", trackCount);
+		throw FlycastException(i18n::Ts("Invalid GDI file"));
+	}
+
+	INFO_LOG(GDROM, "GDI: %d tracks", trackCount);
+
+	std::string basepath = hostfs::storage().getParentPath(file);
+
+	MD5Sum md5;
+
+	std::unique_ptr<Disc> disc = std::make_unique<Disc>();
+	for (u32 i = 0; i < trackCount; i++)
+	{
+		std::string track_filename;
+
+		u32 TRACK = 0, FADS = 0, CTRL = 0, SSIZE = 0;
+		s32 OFFSET = 0;
 		//TRACK FADS CTRL SSIZE file OFFSET
-		fscanf(t,"%d %d %d %d",&TRACK,&FADS,&CTRL,&SSIZE);
-		//%s %d\r\n,temp,&OFFSET);
-		//disc->tracks.push_back(
-		while(isspace(fgetc(t))) ;
-		fseek(t,-1,SEEK_CUR);
-		if (fgetc(t)=='"')
+		gdi >> TRACK;
+		gdi >> FADS;
+		gdi >> CTRL;
+		gdi >> SSIZE;
+
+		char last;
+		do {
+			gdi >> last;
+		} while (isspace(last));
+		
+		if (last == '"')
 		{
-			char c;
-			int i=0;
-			while((c=fgetc(t))!='"')
-				temp[i++]=c;
-			temp[i]=0;
+			gdi >> std::noskipws;
+			for(;;) {
+				gdi >> last;
+				if (last == '"')
+					break;
+				track_filename += last;
+			}
+			gdi >> std::skipws;
 		}
 		else
 		{
-			fseek(t,-1,SEEK_CUR);
-			fscanf(t,"%s",temp);
+			gdi >> track_filename;
+			track_filename = last + track_filename;
+		}
+		gdi >> OFFSET;
+
+		if (TRACK < 1 || TRACK > trackCount) {
+			WARN_LOG(GDROM, "Track number out of bounds: %d", TRACK);
+			throw FlycastException(i18n::Ts("Invalid GDI file"));
+		}
+		if (CTRL != 0 && CTRL != 4) {
+			WARN_LOG(GDROM, "Unsupported track type: %d", CTRL);
+			throw FlycastException(i18n::Ts("Invalid GDI file"));
+		}
+		switch (TRACK)
+		{
+		case 1:
+			if (CTRL != 4) {
+				WARN_LOG(GDROM, "Track 1 must be a data track");
+				throw FlycastException(i18n::Ts("Invalid GDI file"));
+			}
+			break;
+		case 2:
+			if (CTRL != 0) {
+				WARN_LOG(GDROM, "Track 2 must be an audio track");
+				throw FlycastException(i18n::Ts("Invalid GDI file"));
+			}
+			break;
+		case 3:
+			if (CTRL != 4) {
+				WARN_LOG(GDROM, "Track 3 must be a data track");
+				throw FlycastException(i18n::Ts("Invalid GDI file"));
+			}
+			if (FADS != 45000) {
+				WARN_LOG(GDROM, "Track 3 should start at 45000, not %d", FADS);
+				throw FlycastException(i18n::Ts("Invalid GDI file"));
+			}
+			break;
+		default:
+			break;
+		}
+		if (SSIZE != 2352 && SSIZE != 2048) {
+			WARN_LOG(GDROM, "Unsupported sector size: %d", SSIZE);
+			throw FlycastException(i18n::Ts("Invalid GDI file"));
 		}
 
-		fscanf(t,"%d\r\n",&OFFSET);
-		printf("file[%d] \"%s\": FAD:%d, CTRL:%d, SSIZE:%d, OFFSET:%d\n",TRACK,temp,FADS,CTRL,SSIZE,OFFSET);
-		
-		
+		DEBUG_LOG(GDROM, "file[%d] \"%s\": FAD:%d, CTRL:%d, SSIZE:%d, OFFSET:%d", TRACK, track_filename.c_str(), FADS, CTRL, SSIZE, OFFSET);
 
 		Track t;
-		t.ADDR=0;
-		t.StartFAD=FADS+150;
-		t.EndFAD=0;		//fill it in
-		t.file=0;
+		t.StartFAD = FADS + 150;
+		t.CTRL = CTRL;
 
-		if (SSIZE!=0)
-		{
-			strcpy(pathptr,temp);
-			t.file = new RawTrackFile(fopen(path,"rb"),OFFSET,t.StartFAD,SSIZE);	
-		}
+		std::string path = hostfs::storage().getSubPath(basepath, track_filename);
+		hostfs::File *file = hostfs::storage().openFile(path, "rb");
+		if (file == nullptr)
+			throw FlycastException(strprintf(i18n::T("GDI file: Cannot open track %s"), path.c_str()));
+		if (digest != nullptr)
+			md5.add(file);
+		t.file = new RawTrackFile(file, OFFSET, t.StartFAD, SSIZE);
+		hostfs::FileInfo fileInfo = hostfs::storage().getFileInfo(path);
+		if ((fileInfo.size - OFFSET) % SSIZE != 0)
+			WARN_LOG(GDROM, "Warning: Size of track %s is not multiple of sector size %d", track_filename.c_str(), SSIZE);
+		t.EndFAD = t.StartFAD + (u32)(fileInfo.size - OFFSET) / SSIZE - 1;
 		disc->tracks.push_back(t);
 	}
 
-	disc->FillGDSession();
-
-	return disc;
-}
-
-
-Disc* gdi_parse(char* file)
-{
-	size_t len=strlen(file);
-	if (len>4)
-	{
-		if (stricmp( &file[len-4],".gdi")==0)
-		{
-			return load_gdi(file);
-		}
+	if (disc->tracks.size() != trackCount) {
+		WARN_LOG(GDROM, "Track count %d but found %d tracks", trackCount, (int)disc->tracks.size());
+		throw FlycastException(i18n::Ts("Invalid GDI file"));
 	}
-	return 0;
+	disc->FillGDSession();
+	if (digest != nullptr)
+		*digest = md5.getDigest();
+
+	return disc.release();
 }
 
-void iso_term()
+
+Disc* gdi_parse(const char* file, std::vector<u8> *digest)
 {
+	if (get_file_extension(file) != "gdi")
+		return nullptr;
+
+	return load_gdi(file, digest);
 }

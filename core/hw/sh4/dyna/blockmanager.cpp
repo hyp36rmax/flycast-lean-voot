@@ -4,369 +4,272 @@
 */
 
 #include <algorithm>
+#include <set>
+#include <map>
 #include "blockmanager.h"
 #include "ngen.h"
 
-#include "../sh4_interpreter.h"
-#include "../sh4_opcode_list.h"
-#include "../sh4_core.h"
-#include "../sh4_if.h"
-#include "hw/pvr/pvr_mem.h"
-#include "hw/aica/aica_if.h"
-//#include "../dmac.h"
-#include "hw/gdrom/gdrom_if.h"
-//#include "../intc.h"
-//#include "../tmu.h"
+#include "hw/sh4/sh4_core.h"
+#include "hw/sh4/sh4_interrupts.h"
 #include "hw/sh4/sh4_mem.h"
+#include "hw/sh4/sh4_opcode_list.h"
+#include "hw/sh4/sh4_sched.h"
+#include "hw/sh4/modules/mmu.h"
+#include "oslib/virtmem.h"
 
-
-#if HOST_OS==OS_LINUX && defined(DYNA_OPROF)
+#if defined(__unix__) && defined(DYNA_OPROF)
 #include <opagent.h>
 op_agent_t          oprofHandle;
 #endif
 
-#ifndef HOST_NO_REC
+#if FEAT_SHREC != DYNAREC_NONE
 
 
-typedef vector<RuntimeBlockInfo*> bm_List;
+typedef std::vector<RuntimeBlockInfoPtr> bm_List;
+typedef std::set<RuntimeBlockInfoPtr> bm_Set;
+typedef std::map<void*, RuntimeBlockInfoPtr> bm_Map;
 
-#define BLOCKS_IN_PAGE_LIST_COUNT (RAM_SIZE/4096)
-bm_List blocks_page[BLOCKS_IN_PAGE_LIST_COUNT];
+static bm_Set all_temp_blocks;
+static bm_List del_blocks;
 
-bm_List all_blocks;
-bm_List del_blocks;
-#include <set>
+static u32 pageCount;
+bool *unprotected_pages;
+static std::set<RuntimeBlockInfo*> *blocks_per_page;
 
-struct BlockMapCMP
+static bm_Map blkmap;
+// Stats
+u32 protected_blocks;
+u32 unprotected_blocks;
+
+#define FPCA(x) ((DynarecCodeEntryPtr&)p_sh4rcb->fpcb[(x>>1)&FPCB_MASK])
+
+// addr must be a physical address
+// This returns an executable address
+static DynarecCodeEntryPtr DYNACALL bm_GetCode(u32 addr)
 {
-	static bool is_code(RuntimeBlockInfo* blk)
-	{
-		if ((unat)((u8*)blk-CodeCache)<CODE_SIZE)
-			return true;
-		else
-			return false;
-	}
-
-	static unat get_blkstart(RuntimeBlockInfo* blk)
-	{
-		if (is_code(blk)) 
-			return (unat)blk; 
-		else 
-			return (unat)blk->code;
-	}
-
-	static unat get_blkend(RuntimeBlockInfo* blk)
-	{
-		if (is_code(blk)) 
-			return (unat)blk; 
-		else 
-			return (unat)blk->code+blk->host_code_size-1;
-	}
-
-	//return true if blkl > blkr
-	bool operator()(RuntimeBlockInfo* blkl, RuntimeBlockInfo* blkr) const
-	{
-		if (!is_code(blkl) && !is_code(blkr))
-			return (unat)blkl->code<(unat)blkr->code;
-
-		unat blkr_start=get_blkstart(blkr),blkl_end=get_blkend(blkl);
-
-		if (blkl_end<blkr_start)
-		{
-			return true;
-		}
-		else
-		{
-			return false;
-		}
-	}
-};
-
-typedef std::set<RuntimeBlockInfo*,BlockMapCMP> blkmap_t;
-blkmap_t blkmap;
-u32 bm_gc_luc,bm_gcf_luc;
-
-
-#define FPCA(x) ((DynarecCodeEntry*&)sh4rcb.fpcb[(x>>1)&(8*1024*1024-1)])
-
-DynarecCodeEntry* DYNACALL bm_GetCode(u32 addr)
-{
-	//rdv_FailedToFindBlock_pc=addr;
-	DynarecCodeEntry* rv=FPCA(addr);
+	DynarecCodeEntryPtr rv = FPCA(addr);
 
 	return rv;
 }
 
-DynarecCodeEntry* DYNACALL bm_GetCode2(u32 addr)
+// addr must be a virtual address
+// This returns an executable address
+DynarecCodeEntryPtr DYNACALL bm_GetCodeByVAddr(u32 addr)
 {
-	return bm_GetCode(addr);
+	if (!mmu_enabled())
+		return bm_GetCode(addr);
+
+	if (addr & 1)
+	{
+		switch (addr)
+		{
+#ifdef USE_WINCE_HACK
+		case 0xfffffde7: // GetTickCount
+			// This should make this syscall faster
+			Sh4cntx.r[0] = sh4_sched_now64() * 1000 / SH4_MAIN_CLOCK;
+			Sh4cntx.pc = Sh4cntx.pr;
+			Sh4cntx.cycle_counter -= 100;
+			break;
+
+		case 0xfffffd05: // QueryPerformanceCounter(u64 *)
+			{
+				bool isRam;
+				u64 *ptr;
+				u32 paddr;
+				if (rdv_writeMemImmediate(Sh4cntx.r[4], sizeof(u64), (void*&)ptr, isRam, paddr) && isRam)
+				{
+					*ptr = sh4_sched_now64() >> 4;
+					Sh4cntx.r[0] = 1;
+					Sh4cntx.pc = Sh4cntx.pr;
+					Sh4cntx.cycle_counter -= 100;
+				}
+				else
+				{
+					Do_Exception(addr, Sh4Ex_AddressErrorRead);
+				}
+			}
+			break;
+		case 0xfffffded: // GetProcAddressW
+			{
+				// Intercept the dricas authentication function and replace it with a stub (Hundred Swords, Rune Jade)
+				static constexpr u16 Function[] = { 'U', 'A', '_', 'Q', 'u', 'e', 'r', 'y', 'D', '\0' };
+				bool success = false;
+				u32 vaddr = Sh4cntx.r[5];
+				if ((vaddr & 0xffff0000) != 0) // not an ordinal
+				{
+					u32 pa = 0;
+					for (unsigned i = 0; ; i++)
+					{
+						if (pa == 0 && mmu_full_lookup(vaddr, nullptr, pa) != MmuError::NONE)
+							break;
+						u16 c = ReadMem16_nommu(pa);
+						if (c != Function[i])
+							break;
+						if (c == 0) {
+							success = true;
+							break;
+						}
+						vaddr += 2;
+						if ((vaddr & 0xfff) == 0)
+							pa = 0;
+						else
+							pa += 2;
+					}
+				}
+				if (success)
+				{
+					INFO_LOG(DYNAREC, "GetProcAddressW('UA_QueryD') intercepted");
+					Sh4cntx.r[0] = 0xffff0001;
+					Sh4cntx.pc = Sh4cntx.pr;
+				}
+				else {
+					Do_Exception(addr, Sh4Ex_AddressErrorRead);
+				}
+			}
+			break;
+		case 0xffff0001:	// UA_QueryD stub
+			DEBUG_LOG(DYNAREC, "UA_QueryD called");
+			Sh4cntx.r[0] = 0;
+			Sh4cntx.pc = Sh4cntx.pr;
+			break;
+#endif
+
+		default:
+			Do_Exception(addr, Sh4Ex_AddressErrorRead);
+			break;
+		}
+		addr = Sh4cntx.pc;
+	}
+
+	u32 paddr;
+	MmuError rv = mmu_instruction_translation(addr, paddr);
+	if (rv != MmuError::NONE)
+	{
+		DoMMUException(addr, rv, MMU_TT_IREAD);
+		mmu_instruction_translation(Sh4cntx.pc, paddr);
+	}
+
+	return bm_GetCode(paddr);
 }
 
-RuntimeBlockInfo* DYNACALL bm_GetBlock(u32 addr)
+// addr must be a physical address
+// This returns an executable address
+RuntimeBlockInfoPtr DYNACALL bm_GetBlock(u32 addr)
 {
-	DynarecCodeEntry* cde=bm_GetCode(addr);
+	DynarecCodeEntryPtr cde = bm_GetCode(addr);  // Returns RX ptr
 
-	if (cde==ngen_FailedToFindBlock)
-		return 0;
+	if (cde == ngen_FailedToFindBlock)
+		return NULL;
 	else
-		return bm_GetBlock((void*)cde);
+		return bm_GetBlock((void*)cde);  // Returns RX pointer
 }
 
-RuntimeBlockInfo* bm_GetBlock(void* dynarec_code)
+// This takes a RX address and returns the info block ptr (RW space)
+RuntimeBlockInfoPtr bm_GetBlock(void* dynarec_code)
 {
-	blkmap_t::iterator iter=blkmap.find((RuntimeBlockInfo*)dynarec_code);
-	if (iter!=blkmap.end())
-	{
-		verify((*iter)->contains_code((u8*)dynarec_code));
-		return *iter;
-	}
-	else
-	{
-		printf("bm_GetBlock(%08X) failed ..\n",dynarec_code);
-		return 0;
-	}
+	if (blkmap.empty())
+		return NULL;
+
+	void *dynarecrw = CC_RX2RW(dynarec_code);
+	// Returns a block who's code addr is bigger than dynarec_code (or end)
+	auto iter = blkmap.upper_bound(dynarecrw);
+	if (iter == blkmap.begin())
+		return NULL;
+	iter--;  // Need to go back to find the potential candidate
+
+	// However it might be out of bounds, check for that
+	if (!iter->second->containsCode(dynarecrw))
+		return NULL;
+
+	return iter->second;
 }
 
-RuntimeBlockInfo* bm_GetStaleBlock(void* dynarec_code)
+static void bm_CleanupDeletedBlocks()
 {
-	for(u32 i=0;i<del_blocks.size();i++)
-	{
-		if (del_blocks[i]->contains_code((u8*)dynarec_code))
-			return del_blocks[i];
-	}
+	del_blocks.clear();
+}
 
-	return 0;
+// Takes RX pointer and returns a RW pointer
+RuntimeBlockInfoPtr bm_GetStaleBlock(void* dynarec_code)
+{
+	void *dynarecrw = CC_RX2RW(dynarec_code);
+	if (del_blocks.empty())
+		return NULL;
+	// Start from the end to get the youngest one
+	auto it = del_blocks.end();
+	do
+	{
+		--it;
+		if ((*it)->containsCode(dynarecrw))
+			return *it;
+	} while (it != del_blocks.begin());
+
+	return NULL;
 }
 
 void bm_AddBlock(RuntimeBlockInfo* blk)
 {
-	/*
-	if (IsOnRam(blk->addr) && PageIsConst(blk->addr))
-	{
-		blocks_page[(blk->addr&RAM_MASK)/PAGE_SIZE].push_back(blk);
+	RuntimeBlockInfoPtr block(blk);
+	if (block->temp_block)
+		all_temp_blocks.insert(block);
+	auto iter = blkmap.find((void*)blk->code);
+	if (iter != blkmap.end()) {
+		ERROR_LOG(DYNAREC, "DUP: %08X %p %08X %p", iter->second->addr, iter->second->code, block->addr, block->code);
+		die("Duplicated block");
 	}
-	*/
-	all_blocks.push_back(blk);
-	if (blkmap.find(blk)!=blkmap.end())
-	{
-		printf("DUP: %08X %08X %08X %08X\n", (*blkmap.find(blk))->addr,(*blkmap.find(blk))->code,blk->addr,blk->code);
-		verify(false);
-	}
-	blkmap.insert(blk);
+	blkmap[(void*)block->code] = block;
 
-
-	verify(bm_GetCode(blk->addr)==ngen_FailedToFindBlock);
-	FPCA(blk->addr)=blk->code;
+	verify((void*)bm_GetCode(block->addr) == (void*)ngen_FailedToFindBlock);
+	FPCA(block->addr) = (DynarecCodeEntryPtr)CC_RW2RX(block->code);
 
 #ifdef DYNA_OPROF
 	if (oprofHandle)
 	{
 		char fname[512];
 
-		sprintf(fname,"sh4:%08X,c:%d,s:%d,h:%d",blk->addr,blk->guest_cycles,blk->guest_opcodes,blk->host_opcodes);
+		snprintf(fname, sizeof(fname), "sh4:%08X,c:%d,s:%d,h:%d", block->addr, block->guest_cycles, block->guest_opcodes, block->host_opcodes);
 
-		if (op_write_native_code(oprofHandle, fname, (uint64_t)blk->code, (void*)blk->code, blk->host_code_size) != 0) 
+		if (op_write_native_code(oprofHandle, fname, (uint64_t)block->code, (void*)block->code, block->host_code_size) != 0)
 		{
-			printf("op_write_native_code error\n");
+			INFO_LOG(DYNAREC, "op_write_native_code error");
 		}
 	}
 #endif
 
 }
 
-u32 PAGE_STATE[RAM_SIZE/32];
-
-bool PageIsConst(u32 addr)
+void bm_DiscardBlock(RuntimeBlockInfo* block)
 {
-	if (IsOnRam(addr))
-	{
-		addr&=RAM_MASK;
-		if (addr>0x0010100)
-		{
-			return PAGE_STATE[addr/32]&(1<<addr);
-		}
-	}
+	// Remove from block map
+	auto it = blkmap.find((void*)block->code);
+	verify(it != blkmap.end());
+	RuntimeBlockInfoPtr block_ptr = it->second;
 
-	return false;
+	blkmap.erase(it);
+
+	block_ptr->pNextBlock = NULL;
+	block_ptr->pBranchBlock = NULL;
+	block_ptr->Relink();
+
+	// Remove from jump table
+	verify((void*)bm_GetCode(block_ptr->addr) == CC_RW2RX((void*)block_ptr->code));
+	FPCA(block_ptr->addr) = ngen_FailedToFindBlock;
+
+	if (block_ptr->temp_block)
+		all_temp_blocks.erase(block_ptr);
+
+	del_blocks.push_back(block_ptr);
+	block_ptr->Discard();
 }
 
-bool UDgreaterX ( RuntimeBlockInfo* elem1, RuntimeBlockInfo* elem2 )
-{	
-	return elem1->runs > elem2->runs;
-}
-
-bool UDgreaterLOC ( RuntimeBlockInfo* elem1, RuntimeBlockInfo* elem2 )
-{	
-	return elem1->addr < elem2->addr;
-}
-
-u32 FindPath(RuntimeBlockInfo* rbi, u32 sa,s32 mc,u32& plc)
-{
-	if (mc < 0 || rbi==0)
-		return 0;
-
-	plc++;
-	if (rbi->BlockType==BET_Cond_0 || rbi->BlockType==BET_Cond_1)
-	{
-		u32 plc1=plc,plc2=plc,v1=0,v2=0;
-		if (rbi->BranchBlock>sa)
-		{
-			v1=FindPath(bm_GetBlock(rbi->BranchBlock),rbi->addr,mc-rbi->guest_cycles,plc1);
-		}
-		v2=FindPath(bm_GetBlock(rbi->NextBlock),rbi->addr,mc-rbi->guest_cycles,plc2);
-		if (plc1>plc2)
-		{
-			plc=plc1;
-			return rbi->guest_cycles+v1;
-		}
-		else
-		{
-			plc=plc2;
-			return rbi->guest_cycles+v2;
-		}
-		
-	}
-	else if (rbi->BlockType==BET_StaticJump)
-	{
-		if (rbi->BranchBlock>sa)
-			return rbi->guest_cycles+FindPath(bm_GetBlock(rbi->BranchBlock),rbi->addr,mc-rbi->guest_cycles,plc);
-		else
-		{
-			return rbi->guest_cycles;
-		}
-	}
-	else
-	{
-		if (plc!=1)
-			printf("Chain lost due to %d\n",rbi->BlockType);
-		else
-			printf("Chain fail due to %d\n",rbi->BlockType);
-		return rbi->guest_cycles;
-	}
-}
-u32 total_saved;
-void FindPath(u32 start)
-{
-	RuntimeBlockInfo* rbi=bm_GetBlock(start);
-
-	if (!rbi || !rbi->runs)
-		return;
-
-	u32 plen=0;
-	u32 pclc=FindPath(rbi,start,SH4_TIMESLICE,plen);
-	if (plen>1)
-	{
-		total_saved+=(plen-1)*2*rbi->runs;
-		printf("%08X: %d, %d, %.2f, %.2f\n",start,pclc,plen,pclc/(float)plen,plen*2*rbi->runs/1000.f);
-	}
-	rbi->runs=0;
-}
-
-#include <map>
-u32 rebuild_counter=20;
 void bm_Periodical_1s()
 {
-	for (u32 i=0;i<del_blocks.size();i++)
-		delete del_blocks[i];
-
-	del_blocks.clear();
-
-	if (rebuild_counter>0) rebuild_counter--;
-#if HOST_OS==OS_WINDOWS && 0
-	std::sort(all_blocks.begin(),all_blocks.end(),UDgreaterX);
-
-	map<u32,u32> vmap;
-	map<u32,u32> calls;
-
-	u32 total_runs=0;
-	for(int i=0;i<all_blocks.size();i++)
-	{
-		RuntimeBlockInfo* rbi=all_blocks[i];
-		total_runs+=rbi->runs;
-		if (rbi->BranchBlock!=-1 && rbi->BranchBlock < rbi->addr)
-		{
-			if (rbi->BlockType==BET_Cond_0 || rbi->BlockType==BET_Cond_1 || rbi->BlockType==BET_StaticJump)
-			{
-				RuntimeBlockInfo* bbi=bm_GetBlock(all_blocks[i]->BranchBlock);
-				if (bbi && bbi->runs)
-				{
-					vmap[all_blocks[i]->BranchBlock]=bbi->runs;
-				}
-			}
-
-			if (rbi->BlockType==BET_StaticCall)
-			{
-				RuntimeBlockInfo* bbi=bm_GetBlock(all_blocks[i]->BranchBlock);
-				if (bbi && bbi->runs)
-				{
-					calls[all_blocks[i]->BranchBlock]+=rbi->runs;
-				}
-			}
-		}
-		verify(rbi->NextBlock>rbi->addr);
-	}
-
-	map<u32,u32>::iterator iter=vmap.begin();
-
-	total_saved=0;
-	u32 total_l_runs=0;
-	while(iter!=vmap.end())
-	{
-		FindPath(iter->first);
-		total_l_runs+=iter->second;
-		iter++;
-	}
-
-	for(int i=0;i<all_blocks.size();i++)
-		all_blocks[i]->runs=0;
-
-	printf("Total Saved: %.2f || Total Loop Runs: %.2f  || Total Runs: %.2f\n",total_saved/1000.f,total_l_runs/1000.f,total_runs/1000.f);
-#endif
+	bm_CleanupDeletedBlocks();
 }
 
-void constprop(RuntimeBlockInfo* blk);
-void bm_Rebuild()
+void bm_vmem_pagefill(void** ptr, u32 size_bytes)
 {
-	return;
-
-	void RASDASD();
-	RASDASD();
-
-	blkmap.clear();
-	
-	std::sort(all_blocks.begin(),all_blocks.end(),UDgreaterLOC);
-	
-	for(size_t i=0; i<all_blocks.size(); i++)
-	{
-		bool do_opts=((all_blocks[i]->addr&0x3FFFFFFF)>0x0C010100);
-
-		if (all_blocks[i]->staging_runs<0 && do_opts)
-		{
-//#if HOST_OS==OS_WINDOWS
-			//constprop(all_blocks[i]);
-//#endif
-		}
-		ngen_Compile(all_blocks[i],false,false,all_blocks[i]->staging_runs>0,do_opts);
-
-		blkmap.insert(all_blocks[i]);
-		verify(bm_GetBlock((RuntimeBlockInfo*)all_blocks[i]->code)==all_blocks[i]);
-
-		FPCA(all_blocks[i]->addr)=all_blocks[i]->code;
-	}
-
-	for(size_t i=0; i<all_blocks.size(); i++)
-	{
-		all_blocks[i]->Relink();
-	}
-
-	rebuild_counter=30;
-}
-
-void _vmem_bm_reset();
-
-void _vmem_bm_pagefail(void** ptr,u32 PAGE_SZ)
-{
-	for (size_t i=0; i<PAGE_SZ/sizeof(ptr[0]); i++)
+	for (size_t i = 0; i < size_bytes / sizeof(ptr[0]); i++)
 	{
 		ptr[i]=(void*)ngen_FailedToFindBlock;
 	}
@@ -374,31 +277,79 @@ void _vmem_bm_pagefail(void** ptr,u32 PAGE_SZ)
 
 void bm_Reset()
 {
-	ngen_ResetBlocks();
-	for (u32 i=0; i<BLOCKS_IN_PAGE_LIST_COUNT; i++)
+	bm_CleanupDeletedBlocks();
+	protected_blocks = 0;
+	unprotected_blocks = 0;
+
+#ifndef __SWITCH__
+	if (addrspace::virtmemEnabled())
 	{
-		blocks_page[i].clear();
+		// Windows cannot lock/unlock a region spanning more than one VirtualAlloc or MapViewOfFile
+		// so we have to unlock each region individually
+		if (settings.platform.ram_size == 16_MB)
+		{
+			virtmem::region_unlock(addrspace::ram_base + 0x0C000000, RAM_SIZE);
+			virtmem::region_unlock(addrspace::ram_base + 0x0D000000, RAM_SIZE);
+			virtmem::region_unlock(addrspace::ram_base + 0x0E000000, RAM_SIZE);
+			virtmem::region_unlock(addrspace::ram_base + 0x0F000000, RAM_SIZE);
+		}
+		else
+		{
+			virtmem::region_unlock(addrspace::ram_base + 0x0C000000, RAM_SIZE);
+			virtmem::region_unlock(addrspace::ram_base + 0x0E000000, RAM_SIZE);
+		}
+	}
+	else
+#endif
+	{
+		virtmem::region_unlock(&mem_b[0], RAM_SIZE);
+	}
+}
+
+void bm_LockPage(u32 addr, u32 size)
+{
+	addr = addr & (RAM_MASK - PAGE_MASK);
+	if (addrspace::virtmemEnabled())
+		virtmem::region_lock(addrspace::ram_base + 0x0C000000 + addr, size);
+	else
+		virtmem::region_lock(&mem_b[addr], size);
+}
+
+void bm_UnlockPage(u32 addr, u32 size)
+{
+	addr = addr & (RAM_MASK - PAGE_MASK);
+	if (addrspace::virtmemEnabled())
+		virtmem::region_unlock(addrspace::ram_base + 0x0C000000 + addr, size);
+	else
+		virtmem::region_unlock(&mem_b[addr], size);
+}
+
+void bm_ResetCache()
+{
+	sh4Dynarec->reset();
+	addrspace::bm_reset();
+
+	for (const auto& it : blkmap)
+	{
+		RuntimeBlockInfoPtr block = it.second;
+		block->relink_data = 0;
+		block->pNextBlock = NULL;
+		block->pBranchBlock = NULL;
+		// needed for the transition to full mmu. Could perhaps limit it to the current block.
+		block->Relink();
+		// Avoid circular references
+		block->Discard();
+		del_blocks.push_back(block);
 	}
 
-	_vmem_bm_reset();
-	
-	for (u32 i=0;i<(8*1024*1024);i++)
-	{
-		//sh4rcb.fpcb[i]=(void*)ngen_FailedToFindBlock;
-	}
-
-	for (size_t i=0; i<all_blocks.size(); i++)
-	{
-		all_blocks[i]->relink_data=0;
-		all_blocks[i]->pNextBlock=0;
-		all_blocks[i]->pBranchBlock=0;
-		all_blocks[i]->Relink();
-	}
-
-	del_blocks.insert(del_blocks.begin(),all_blocks.begin(),all_blocks.end());
-
-	all_blocks.clear();
 	blkmap.clear();
+	// blkmap includes temp blocks as well
+	all_temp_blocks.clear();
+
+	for (size_t i = 0; i < pageCount; i++)
+		blocks_per_page[i].clear();
+
+	memset(unprotected_pages, 0, pageCount);
 
 #ifdef DYNA_OPROF
 	if (oprofHandle)
@@ -407,23 +358,39 @@ void bm_Reset()
 		{
 			if (op_unload_native_code(oprofHandle, (uint64_t)del_blocks[i]->code) != 0)
 			{
-				printf("op_unload_native_code error\n");
+				INFO_LOG(DYNAREC, "op_unload_native_code error");
 			}
 		}
 	}
 #endif
 }
 
+void bm_ResetTempCache(bool full)
+{
+	if (!full)
+	{
+		for (const auto& block : all_temp_blocks)
+		{
+			FPCA(block->addr) = ngen_FailedToFindBlock;
+			blkmap.erase((void*)block->code);
+		}
+	}
+	del_blocks.insert(del_blocks.begin(),all_temp_blocks.begin(),all_temp_blocks.end());
+	all_temp_blocks.clear();
+}
 
 void bm_Init()
 {
+	pageCount = RAM_SIZE_MAX / PAGE_SIZE;
+	unprotected_pages = new bool[pageCount];
+	blocks_per_page = new std::set<RuntimeBlockInfo*>[pageCount];
 
 #ifdef DYNA_OPROF
 	oprofHandle=op_open_agent();
 	if (oprofHandle==0)
-		printf("bm: Failed to open oprofile\n");
+		INFO_LOG(DYNAREC, "bm: Failed to open oprofile");
 	else
-		printf("bm: Oprofile integration enabled !\n");
+		INFO_LOG(DYNAREC, "bm: Oprofile integration enabled !");
 #endif
 }
 
@@ -434,156 +401,165 @@ void bm_Term()
 	
 	oprofHandle=0;
 #endif
+	bm_Reset();
+	delete[] unprotected_pages;
+	delete[] blocks_per_page;
 }
 
-void bm_WriteBlockMap(const string& file)
+void bm_WriteBlockMap(const std::string& file)
 {
 	FILE* f=fopen(file.c_str(),"wb");
 	if (f)
 	{
-		printf("Writing block map !\n");
-		for (size_t i=0; i<all_blocks.size(); i++)
+		INFO_LOG(DYNAREC, "Writing block map !");
+		for (const auto& [_, block] : blkmap)
 		{
-			fprintf(f,"block: %d:%08X:%08X:%d:%d:%d\n",all_blocks[i]->BlockType,all_blocks[i]->addr,all_blocks[i]->code,all_blocks[i]->host_code_size,all_blocks[i]->guest_cycles,all_blocks[i]->guest_opcodes);
-			for(size_t j=0;j<all_blocks[i]->oplist.size();j++)
-				fprintf(f,"\top: %d:%d:%s\n",j,all_blocks[i]->oplist[j].guest_offs,all_blocks[i]->oplist[j].dissasm().c_str());
+			fprintf(f, "block: %d:%08X:%p:%d:%d:%d\n", block->BlockType, block->addr, block->code, block->host_code_size, block->guest_cycles, block->guest_opcodes);
+			for(size_t j = 0; j < block->oplist.size(); j++)
+				fprintf(f,"\top: %zd:%d:%s\n", j, block->oplist[j].guest_offs, block->oplist[j].dissasm().c_str());
 		}
 		fclose(f);
-		printf("Finished writing block map\n");
+		INFO_LOG(DYNAREC, "Finished writing block map");
 	}
-}
-
-u32 GetLookup(RuntimeBlockInfo* elem)
-{
-	return elem->lookups;
-}
-
-bool UDgreater ( RuntimeBlockInfo* elem1, RuntimeBlockInfo* elem2 )
-{
-	return elem1->runs > elem2->runs;
-}
-
-bool UDgreater2 ( RuntimeBlockInfo* elem1, RuntimeBlockInfo* elem2 )
-{
-	return elem1->runs*elem1->host_opcodes > elem2->runs*elem2->host_opcodes;
-}
-
-bool UDgreater3 ( RuntimeBlockInfo* elem1, RuntimeBlockInfo* elem2 )
-{
-	return elem1->runs*elem1->host_opcodes/elem1->guest_cycles > elem2->runs*elem2->host_opcodes/elem2->guest_cycles;
 }
 
 void sh4_jitsym(FILE* out)
 {
-	for (size_t i=0; i<all_blocks.size(); i++)
+	for (const auto& [_, block] : blkmap)
 	{
-		fprintf(out,"%08p %d %08X\n",all_blocks[i]->code,all_blocks[i]->host_code_size,all_blocks[i]->addr);
+		fprintf(out, "%p %d %08X\n", block->code, block->host_code_size, block->addr);
 	}
 }
-
-void bm_PrintTopBlocks()
-{
-	double total_lups=0;
-	double total_runs=0;
-	double total_cycles=0;
-	double total_hops=0;
-	double total_sops=0;
-
-	for (size_t i=0;i<all_blocks.size();i++)
-	{
-		total_lups+=GetLookup(all_blocks[i]);
-		total_cycles+=all_blocks[i]->runs*all_blocks[i]->guest_cycles;
-		total_hops+=all_blocks[i]->runs*all_blocks[i]->host_opcodes;
-		total_sops+=all_blocks[i]->runs*all_blocks[i]->guest_opcodes;
-		total_runs+=all_blocks[i]->runs;
-	}
-
-	printf("Total lookups:  %.0fKRuns, %.0fKLuops, Total cycles: %.0fMhz, Total Hops: %.0fMips, Total Sops: %.0fMips! \n",total_runs/1000,total_lups/1000,total_cycles/1000/1000,total_hops/1000/1000,total_sops/1000/1000);
-	total_hops/=100;
-	total_cycles/=100;
-	total_runs/=100;
-
-	double sel_hops=0;
-	for (size_t i=0;i<(all_blocks.size()/100);i++)
-	{
-		printf("Block %08X: %06X, r: %d (c: %d, s: %d, h: %d) (r: %.2f%%, c: %.2f%%, h: %.2f%%)\n",
-			all_blocks[i]->addr, all_blocks[i]->code,all_blocks[i]->runs,
-			all_blocks[i]->guest_cycles,all_blocks[i]->guest_opcodes,all_blocks[i]->host_opcodes,
-
-			all_blocks[i]->runs/total_runs,
-			all_blocks[i]->guest_cycles*all_blocks[i]->runs/total_cycles,
-			all_blocks[i]->host_opcodes*all_blocks[i]->runs/total_hops);
-		
-		sel_hops+=all_blocks[i]->host_opcodes*all_blocks[i]->runs;
-	}
-
-	printf(" >-< %.2f%% covered in top 1% blocks\n",sel_hops/total_hops);
-
-	size_t i;
-	for (i=all_blocks.size()/100;sel_hops/total_hops<50;i++)
-	{
-		printf("Block %08X: %06X, r: %d (c: %d, s: %d, h: %d) (r: %.2f%%, c: %.2f%%, h: %.2f%%)\n",
-			all_blocks[i]->addr, all_blocks[i]->code,all_blocks[i]->runs,
-			all_blocks[i]->guest_cycles,all_blocks[i]->guest_opcodes,all_blocks[i]->host_opcodes,
-
-			all_blocks[i]->runs/total_runs,
-			all_blocks[i]->guest_cycles*all_blocks[i]->runs/total_cycles,
-			all_blocks[i]->host_opcodes*all_blocks[i]->runs/total_hops);
-		
-		sel_hops+=all_blocks[i]->host_opcodes*all_blocks[i]->runs;
-	}
-
-	printf(" >-< %.2f%% covered in top %.2f%% blocks\n",sel_hops/total_hops,i*100.0/all_blocks.size());
-
-}
-
-void bm_Sort()
-{
-	printf("!!!!!!!!!!!!!!!!!!! BLK REPORT !!!!!!!!!!!!!!!!!!!!n");
-
-	printf("     ---- Blocks: Sorted based on Runs ! ----     \n");
-	std::sort(all_blocks.begin(),all_blocks.end(),UDgreater);
-	bm_PrintTopBlocks();
-
-	printf("<><><><><><><><><><><><><><><><><><><><><><><><><>\n");
-
-	printf("     ---- Blocks: Sorted based on hops ! ----     \n");
-	std::sort(all_blocks.begin(),all_blocks.end(),UDgreater2);
-	bm_PrintTopBlocks();
-
-	printf("<><><><><><><><><><><><><><><><><><><><><><><><><>\n");
-
-	printf("     ---- Blocks: Sorted based on wefs ! ----     \n");
-	std::sort(all_blocks.begin(),all_blocks.end(),UDgreater3);
-	bm_PrintTopBlocks();
-
-	printf("^^^^^^^^^^^^^^^^^^^ END REPORT ^^^^^^^^^^^^^^^^^^^\n");
-
-	for (size_t i=0;i<all_blocks.size();i++)
-	{
-		all_blocks[i]->runs=0;
-	}
-}
-
-
 
 RuntimeBlockInfo::~RuntimeBlockInfo()
 {
-
+	if (sh4_code_size != 0)
+	{
+		if (read_only)
+			protected_blocks--;
+		else
+			unprotected_blocks--;
+	}
 }
-#include <algorithm>
 
-void RuntimeBlockInfo::AddRef(RuntimeBlockInfo* other) 
+void RuntimeBlockInfo::AddRef(const RuntimeBlockInfoPtr& other)
 { 
 	pre_refs.push_back(other); 
 }
 
-void RuntimeBlockInfo::RemRef(RuntimeBlockInfo* other) 
-{ 
-	pre_refs.erase(find(pre_refs.begin(),pre_refs.end(),other)); 
+void RuntimeBlockInfo::RemRef(const RuntimeBlockInfoPtr& other)
+{
+	auto it = std::find(pre_refs.begin(), pre_refs.end(), other);
+	if (it != pre_refs.end())
+		pre_refs.erase(it);
 }
 
-bool print_stats;
+void RuntimeBlockInfo::Discard()
+{
+	// Update references
+	for (RuntimeBlockInfoPtr& ref : pre_refs)
+	{
+		if (ref->pNextBlock == this)
+			ref->pNextBlock = nullptr;
+		if (ref->pBranchBlock == this)
+			ref->pBranchBlock = nullptr;
+		ref->relink_data = 0;
+		ref->Relink();
+	}
+	pre_refs.clear();
+
+	if (read_only)
+	{
+		// Remove this block from the per-page block lists
+		for (u32 addr = this->addr & ~PAGE_MASK; addr < this->addr + this->sh4_code_size; addr += PAGE_SIZE)
+		{
+			auto& block_list = blocks_per_page[(addr & RAM_MASK) / PAGE_SIZE];
+			block_list.erase(this);
+		}
+	}
+}
+
+void RuntimeBlockInfo::SetProtectedFlags()
+{
+	// Don't write protect rom and BIOS/IP.BIN (Grandia II)
+	if (!IsOnRam(addr) || (addr & 0x1FFF0000) == 0x0c000000)
+	{
+		this->read_only = false;
+		unprotected_blocks++;
+		return;
+	}
+	for (u32 addr = this->addr & ~PAGE_MASK; addr < this->addr + sh4_code_size; addr += PAGE_SIZE)
+	{
+		if (unprotected_pages[(addr & RAM_MASK) / PAGE_SIZE])
+		{
+			this->read_only = false;
+			unprotected_blocks++;
+			return;
+		}
+	}
+	this->read_only = true;
+	protected_blocks++;
+	for (u32 addr = this->addr & ~PAGE_MASK; addr < this->addr + sh4_code_size; addr += PAGE_SIZE)
+	{
+		auto& block_list = blocks_per_page[(addr & RAM_MASK) / PAGE_SIZE];
+		if (block_list.empty())
+			bm_LockPage(addr);
+		block_list.insert(this);
+	}
+}
+
+void bm_RamWriteAccess(u32 addr)
+{
+	addr &= RAM_MASK;
+	if (unprotected_pages[addr / PAGE_SIZE])
+		return;
+
+	unprotected_pages[addr / PAGE_SIZE] = true;
+	bm_UnlockPage(addr);
+	std::set<RuntimeBlockInfo*>& block_list = blocks_per_page[addr / PAGE_SIZE];
+	if (!block_list.empty())
+	{
+		std::vector<RuntimeBlockInfo*> list_copy;
+		list_copy.insert(list_copy.begin(), block_list.begin(), block_list.end());
+		if (!list_copy.empty())
+			DEBUG_LOG(DYNAREC, "bm_RamWriteAccess write access to %08x pc %08x", addr, Sh4cntx.pc);
+		for (auto& block : list_copy)
+			bm_DiscardBlock(block);
+		verify(block_list.empty());
+	}
+}
+
+u32 bm_getRamOffset(void *p)
+{
+#ifndef __SWITCH__
+	if (addrspace::virtmemEnabled())
+	{
+		if ((u8 *)p < addrspace::ram_base || (u8 *)p >= addrspace::ram_base + 0x20000000)
+			return -1;
+		u32 addr = (u8*)p - addrspace::ram_base;
+		if (!IsOnRam(addr))
+			return -1;
+		return addr & RAM_MASK;
+	}
+	else
+#endif
+	{
+		if ((u8 *)p < &mem_b[0] || (u8 *)p >= &mem_b[RAM_SIZE])
+			return -1;
+		return (u32)((u8 *)p - &mem_b[0]);
+	}
+}
+
+bool bm_RamWriteAccess(void *p)
+{
+	u32 offset = bm_getRamOffset(p);
+	if (offset == (u32)-1)
+		return false;
+	bm_RamWriteAccess(offset);
+	return true;
+}
+
+bool print_stats = true;
 
 void fprint_hex(FILE* d,const char* init,u8* ptr, u32& ofs, u32 limit)
 {
@@ -614,71 +590,67 @@ void print_blocks()
 
 	if (print_stats)
 	{
-		f=fopen(GetPath("/blkmap.lst").c_str(),"w");
-		print_stats=0;
+		f=fopen(get_writable_data_path("blkmap.lst").c_str(),"w");
+		print_stats=false;
 
-		printf("Writing blocks to %p\n",f);
+		INFO_LOG(DYNAREC, "Writing blocks to %p", f);
 	}
 
-	for (size_t i=0;i<all_blocks.size();i++)
+	for (const auto& [_, blk] : blkmap)
 	{
-		RuntimeBlockInfo* blk=all_blocks[i];
-
 		if (f)
 		{
-			fprintf(f,"block: %08X\n",blk);
-			fprintf(f,"addr: %08X\n",blk->addr);
-			fprintf(f,"hash: %s\n",blk->hash());
-			fprintf(f,"hash_rloc: %s\n",blk->hash(false,true));
-			fprintf(f,"code: %08X\n",blk->code);
-			fprintf(f,"runs: %d\n",blk->runs);
+			fprintf(f,"block: %p\n",blk.get());
+			fprintf(f,"vaddr: %08X\n",blk->vaddr);
+			fprintf(f,"paddr: %08X\n",blk->addr);
+			fprintf(f,"code: %p\n",blk->code);
 			fprintf(f,"BlockType: %d\n",blk->BlockType);
 			fprintf(f,"NextBlock: %08X\n",blk->NextBlock);
 			fprintf(f,"BranchBlock: %08X\n",blk->BranchBlock);
-			fprintf(f,"pNextBlock: %08X\n",blk->pNextBlock);
-			fprintf(f,"pBranchBlock: %08X\n",blk->pBranchBlock);
+			fprintf(f,"pNextBlock: %p\n",blk->pNextBlock);
+			fprintf(f,"pBranchBlock: %p\n",blk->pBranchBlock);
 			fprintf(f,"guest_cycles: %d\n",blk->guest_cycles);
 			fprintf(f,"guest_opcodes: %d\n",blk->guest_opcodes);
 			fprintf(f,"host_opcodes: %d\n",blk->host_opcodes);
-			fprintf(f,"il_opcodes: %d\n",blk->oplist.size());
+			fprintf(f,"il_opcodes: %zd\n",blk->oplist.size());
 
-			u32 hcode=0;
 			s32 gcode=-1;
-			u8* pucode=(u8*)blk->code;
 
 			size_t j=0;
 			
 			fprintf(f,"{\n");
 			for (;j<blk->oplist.size();j++)
 			{
-				shil_opcode* op=&all_blocks[i]->oplist[j];
-				fprint_hex(f,"//h:",pucode,hcode,op->host_offs);
+				shil_opcode* op = &blk->oplist[j];
+				//fprint_hex(f,"//h:",pucode,hcode,op->host_offs);
 
 				if (gcode!=op->guest_offs)
 				{
 					gcode=op->guest_offs;
-					u32 rpc=blk->addr+gcode;
-					u16 op=ReadMem16(rpc);
+					u32 rpc=blk->vaddr+gcode;
+					try {
+						u16 op=IReadMem16(rpc);
 
-					char temp[128];
-					OpDesc[op]->Dissasemble(temp,rpc,op);
+						char temp[128];
+						OpDesc[op]->Disassemble(temp,rpc,op);
 
-					fprintf(f,"//g:%s\n",temp);
+						fprintf(f,"//g: %04X %s\n", op, temp);
+					} catch (const SH4ThrownException& ex) {
+						fprintf(f,"//g: ???? (page fault)\n");
+					}
 				}
 
-				string s=op->dissasm();
-				fprintf(f,"//il:%d:%d:%s\n",op->guest_offs,op->host_offs,s.c_str());
+				std::string s = op->dissasm();
+				fprintf(f,"//il:%d:%d: %s\n",op->guest_offs,op->host_offs,s.c_str());
 			}
 			
-			fprint_hex(f,"//h:",pucode,hcode,blk->host_code_size);
+			//fprint_hex(f,"//h:",pucode,hcode,blk->host_code_size);
 
 			fprintf(f,"}\n");
 		}
-
-		all_blocks[i]->runs=0;
 	}
 
 	if (f) fclose(f);
 }
-#endif //#ifndef HOST_NO_REC
+#endif
 

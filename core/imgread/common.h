@@ -1,34 +1,10 @@
 #pragma once
-#include "gd_driver.h"
+#include "types.h"
 #include <vector>
-using namespace std;
 
-extern u32 NullDriveDiscType;
-struct TocTrackInfo
-{
-	u32 FAD;    //fad, Intel format
-	u8 Control; //control info
-	u8 Addr;    //address info
-	u8 Session; //Session where the track belongs
-};
-struct TocInfo
-{
-	//0-98 ->1-99
-	TocTrackInfo tracks[99];
-
-	u8 FistTrack;
-	u8 LastTrack;
-
-	TocTrackInfo LeadOut; //session set to 0 on that one
-};
-
-struct SessionInfo
-{
-	u32 SessionsEndFAD;   //end of Disc (?)
-	u8 SessionCount;      //must be at least 1
-	u32 SessionStart[99]; //start track for session
-	u32 SessionFAD[99];   //for sessions 1-99 ;)
-};
+#include "emulator.h"
+#include "hw/gdrom/gdrom_if.h"
+#include "oslib/storage.h"
 
 /*
 Mode2 Subheader:
@@ -70,6 +46,7 @@ enum SectorFormat
 	SECFMT_2048_MODE1,			//2048 user byte, form1 sector
 	SECFMT_2048_MODE2_FORM1,	//2048 user bytes, form2m1 sector
 	SECFMT_2336_MODE2,			//2336 user bytes, 
+	SECFMT_2448_MODE2,			//2048 user bytes, ? SYNC (12) | HEAD (4) | sub-head (8) | data (2048) | edc (4) | ecc (276) + subcodes (96) ?
 };
 
 enum SubcodeFormat
@@ -78,23 +55,22 @@ enum SubcodeFormat
 	SUBFMT_96					//raw 96-byte subcode info
 };
 
-bool ConvertSector(u8* in_buff , u8* out_buff , int from , int to,int sector);
+enum DiskArea
+{
+	SingleDensity,
+	DoubleDensity
+};
 
-bool InitDrive(u32 fileflags=0);
-void TermDrive();
+namespace gdr {
 
-void PatchRegion_0(u8* sector,int size);
-void PatchRegion_6(u8* sector,int size);
-void ConvToc(u32* to,TocInfo* from);
-void GetDriveToc(u32* to,DiskArea area);
-void GetDriveSector(u8 * buff,u32 StartSector,u32 SectorCount,u32 secsz);
+bool initDrive(const std::string& path);
+void termDrive();
+void insertDisk(const std::string& path);
+void openLid();
+bool isOpen();
+bool isLoaded();
 
-void GetDriveSessionInfo(u8* to,u8 session);
-int GetFile(char *szFileName, char *szParse=0,u32 flags=0);
-int msgboxf(wchar* text,unsigned int type,...);
-void printtoc(TocInfo* toc,SessionInfo* ses);
-extern u8 q_subchannel[96];
-
+}
 
 struct Session
 {
@@ -104,106 +80,51 @@ struct Session
 
 struct TrackFile
 {
-	virtual void Read(u32 FAD,u8* dst,SectorFormat* sector_type,u8* subcode,SubcodeFormat* subcode_type)=0;
-	virtual ~TrackFile() {};
+	virtual bool Read(u32 FAD, u8 *dst, SectorFormat *sector_type, u8 *subcode, SubcodeFormat *subcode_type) = 0;
+	virtual ~TrackFile() = default;
 };
 
 struct Track
 {
-	TrackFile* file;	//handler for actual IO
-	u32 StartFAD;		//Start FAD
-	u32 EndFAD;			//End FAD
-	u8 CTRL;
-	u8 ADDR;
+	TrackFile* file = nullptr;	// handler for actual IO
+	u32 StartFAD = 0;			// Start FAD
+	u32 EndFAD = 0;				// End FAD
+	u8 CTRL = 0;
+	u8 ADR = 0;
+	std::string isrc;
 
-	Track()
+	bool Read(u32 FAD, u8 *dst, SectorFormat *sector_type, u8 *subcode, SubcodeFormat *subcode_type)
 	{
-		file = 0;
-		StartFAD = 0;
-		EndFAD = 0;
-		CTRL = 0;
-		ADDR = 0;
-	}
-	bool Read(u32 FAD,u8* dst,SectorFormat* sector_type,u8* subcode,SubcodeFormat* subcode_type)
-	{
-		if (FAD>=StartFAD && (FAD<=EndFAD || EndFAD==0) && file)
-		{
-			file->Read(FAD,dst,sector_type,subcode,subcode_type);
-			return true;
-		}
+		if (FAD >= StartFAD && (FAD <= EndFAD || EndFAD == 0) && file != nullptr)
+			return file->Read(FAD, dst, sector_type, subcode, subcode_type);
 		else
 			return false;
 	}
-	void Destroy() { if (file) delete file; file=0; }
+	void Destroy() {
+		delete file;
+		file = nullptr;
+	}
+
+	bool isDataTrack() const {
+		return CTRL & 4;
+	}
 };
 
 struct Disc
 {
-	wstring path;
-	vector<Session> sessions;	//info for sessions
-	vector<Track> tracks;		//info for tracks
-	Track LeadOut;				//info for lead out track (can't read from here)
-	u32 EndFAD;					//Last valid disc sector
-	DiscType type;
+	std::vector<Session> sessions;	// info for sessions
+	std::vector<Track> tracks;		// info for tracks
+	Track LeadOut;					// info for lead out track (can't read from here)
+	u32 EndFAD = 0;					// Last valid disc sector
+	DiscType type = CdRom;
+	std::string catalog;
 
-	//functions !
-	bool ReadSector(u32 FAD,u8* dst,SectorFormat* sector_type,u8* subcode,SubcodeFormat* subcode_type)
-	{
-		for (size_t i=tracks.size();i-->0;)
-		{
-			*subcode_type=SUBFMT_NONE;
-			if (tracks[i].Read(FAD,dst,sector_type,subcode,subcode_type))
-				return true;
-		}
+	u32 ReadSectors(u32 FAD, u32 count, u8 *dst, u32 fmt, bool stopOnMiss = false, LoadProgress *progress = nullptr);
 
-		return false;
-	}
-
-	void ReadSectors(u32 FAD,u32 count,u8* dst,u32 fmt)
-	{
-		u8 temp[2352];
-		SectorFormat secfmt;
-		SubcodeFormat subfmt;
-
-		while(count)
-		{
-			if (ReadSector(FAD,temp,&secfmt,q_subchannel,&subfmt))
-			{
-				//TODO: Proper sector conversions
-				if (secfmt==SECFMT_2352)
-				{
-					ConvertSector(temp,dst,2352,fmt,FAD);
-				}
-				else if (fmt == 2048 && secfmt==SECFMT_2336_MODE2)
-					memcpy(dst,temp+8,2048);
-				else if (fmt==2048 && (secfmt==SECFMT_2048_MODE1 || secfmt==SECFMT_2048_MODE2_FORM1 ))
-				{
-					memcpy(dst,temp,2048);
-				}
-				else if (fmt==2352 && (secfmt==SECFMT_2048_MODE1 || secfmt==SECFMT_2048_MODE2_FORM1 ))
-				{
-					printf("GDR:fmt=2352;secfmt=2048\n");
-					memcpy(dst,temp,2048);
-				}
-				else
-				{
-					printf("ERROR: UNABLE TO CONVERT SECTOR. THIS IS FATAL.");
-					//verify(false);
-				}
-			}
-			else
-			{
-				printf("Sector Read miss\n");
-			}
-			dst+=fmt;
-			FAD++;
-			count--;
-		}
-	}
 	virtual ~Disc() 
 	{
-		for (size_t i=0;i<tracks.size();i++)
-			tracks[i].Destroy();
+		for (auto& track : tracks)
+			track.Destroy();
 	};
 
 	void FillGDSession()
@@ -217,58 +138,96 @@ struct Disc
 
 		//session 2 : start @ track 3, and its fad
 		ses.FirstTrack=3;
-		ses.StartFAD=tracks[0].StartFAD;
+		ses.StartFAD=tracks[2].StartFAD;
 		sessions.push_back(ses);
 
 		//this isn't always true for gdroms, depends on area look @ the get-toc code
-		type=GdRom;
-		LeadOut.ADDR=0;
-		LeadOut.CTRL=0;
-		LeadOut.StartFAD=549300;
+		type = GdRom;
+		LeadOut.ADR = 1;	// subcode-q channel
+		LeadOut.CTRL = 4;	// data
+		LeadOut.StartFAD = 549300;
 
-		EndFAD=549300;
+		EndFAD = 549300;
 	}
 
-	void Dump(const string& path)
+	void Dump(const std::string& path)
 	{
 		for (u32 i=0;i<tracks.size();i++)
 		{
-			u32 fmt=tracks[i].CTRL==4?2048:2352;
+			u32 fmt = tracks[i].isDataTrack() ? 2048 : 2352;
 			char fsto[1024];
-			sprintf(fsto,"%s%s%d.img",path.c_str(),"track",i);
+			snprintf(fsto, sizeof(fsto), "%s%s%d.img", path.c_str(),".track", i);
 			
-			FILE* fo=fopen(fsto,"wb");
+			FILE *fo = nowide::fopen(fsto, "wb");
 
 			for (u32 j=tracks[i].StartFAD;j<=tracks[i].EndFAD;j++)
 			{
-				u8 temp[2352];
+				u8 temp[2448];
 				ReadSectors(j,1,temp,fmt);
-				fwrite(temp,fmt,1,fo);
+				std::fwrite(temp, fmt, 1, fo);
 			}
-			fclose(fo);
+			std::fclose(fo);
 		}
 	}
+
+	void GetSessionInfo(u8* to, u8 session) const
+	{
+		to[0] = 2; //status, will get overwritten anyway
+		to[1] = 0;
+
+		if (session == 0)
+		{
+			to[2] = sessions.size(); 	//count of sessions
+			to[3] = EndFAD >> 16;		//fad is sessions end
+			to[4] = EndFAD >> 8;
+			to[5] = EndFAD >> 0;
+		}
+		else if (session <= sessions.size())
+		{
+			to[2] = sessions[session - 1].FirstTrack;		//start track of this session
+			to[3] = sessions[session - 1].StartFAD >> 16;	//fad is session start
+			to[4] = sessions[session - 1].StartFAD >> 8;
+			to[5] = sessions[session - 1].StartFAD >> 0;
+		}
+		else
+		{
+			// invalid session number
+			to[2] = to[3] = to[4] = to[5] = 0;
+		}
+	}
+
+	u32 GetBaseFAD() const
+	{
+		if (type == GdRom)
+			return 45150;
+
+		u8 ses[6];
+		GetSessionInfo(ses, 0);
+		GetSessionInfo(ses, ses[2]);
+		return (ses[3] << 16) | (ses[4] << 8) | (ses[5] << 0);
+	}
+
+private:
+	bool readSector(u32 FAD, u8 *dst, SectorFormat *sector_type, u8 *subcode, SubcodeFormat *subcode_type);
 };
 
-extern Disc* disc;
+Disc* OpenDisc(const std::string& path, std::vector<u8> *digest = nullptr);
 
 struct RawTrackFile : TrackFile
 {
-	FILE* file;
+	hostfs::File *file;
 	s32 offset;
 	u32 fmt;
-	bool cleanup;
 
-	RawTrackFile(FILE* file,u32 file_offs,u32 first_fad,u32 secfmt)
+	RawTrackFile(hostfs::File *file, u32 file_offs, u32 first_fad, u32 secfmt)
 	{
-		verify(file!=0);
-		this->file=file;
-		this->offset=file_offs-first_fad*secfmt;
-		this->fmt=secfmt;
-		this->cleanup=true;
+		verify(file != nullptr);
+		this->file = file;
+		this->offset = file_offs - first_fad * secfmt;
+		this->fmt = secfmt;
 	}
 
-	virtual void Read(u32 FAD,u8* dst,SectorFormat* sector_type,u8* subcode,SubcodeFormat* subcode_type)
+	bool Read(u32 FAD,u8* dst,SectorFormat* sector_type,u8* subcode,SubcodeFormat* subcode_type) override
 	{
 		//for now hackish
 		if (fmt==2352)
@@ -277,19 +236,57 @@ struct RawTrackFile : TrackFile
 			*sector_type=SECFMT_2048_MODE2_FORM1;
 		else if (fmt==2336)
 			*sector_type=SECFMT_2336_MODE2;
+		else if (fmt==2448)
+			*sector_type=SECFMT_2448_MODE2;
 		else
 		{
-			verify(false);
+			WARN_LOG(GDROM, "Unsupported sector size %d", fmt);
+			return false;
 		}
 
-		fseek(file,offset+FAD*fmt,SEEK_SET);
-		fread(dst,1,fmt,file);
+		file->seek(offset + FAD * fmt, SEEK_SET);
+		if (file->read(dst, 1, fmt) != fmt)
+		{
+			WARN_LOG(GDROM, "Failed or truncated GD-Rom read");
+			return false;
+		}
+		return true;
 	}
-	virtual ~RawTrackFile()
+
+	~RawTrackFile() override
 	{
-		if (cleanup && file)
-			fclose(file);
+		delete file;
 	}
 };
 
 DiscType GuessDiscType(bool m1, bool m2, bool da);
+
+//IO
+u32 libGDR_ReadSector(u8 * buff, u32 StartSector, u32 SectorCount, u32 secsz, bool stopOnMiss = false);
+void libGDR_ReadSubChannel(u8 * buff, u32 len);
+void libGDR_GetToc(u32 *toc, DiskArea area);
+u32 libGDR_GetDiscType();
+void libGDR_GetSessionInfo(u8* pout,u8 session);
+u32 libGDR_GetTrackNumber(u32 sector, u32& elapsed);
+bool libGDR_GetTrack(u32 track_num, u32& start_fad, u32& end_fad);
+std::string libGDR_GetDiskCatalog();
+std::string libGDR_GetTrackIsrc(u32 trackNum);
+void libGDR_GetTrackAdrAndControl(u32 trackNum, u8& adr, u8& ctrl);
+void libGDR_init();
+void libGDR_term();
+void libGDR_serialize(Serializer& ser);
+void libGDR_deserialize(Deserializer& deser);
+
+namespace flycast
+{
+
+inline static size_t fsize(FILE *f)
+{
+	long p = std::ftell(f);
+    std::fseek(f, 0, SEEK_END);
+    size_t size = std::ftell(f);
+    std::fseek(f, p, SEEK_SET);
+    return size;
+}
+
+}

@@ -1,17 +1,15 @@
 #pragma once
-#include "drkPvr.h"
+#include "ta_ctx.h"
+
+extern bool SH4FastEnough;
 
 bool spg_Init();
 void spg_Term();
 void spg_Reset(bool Manual);
+void spg_Serialize(Serializer& ser);
+void spg_Deserialize(Deserializer& deser);
 
-//#define Frame_Cycles (DCclock/60)
-
-//need to replace 511 with correct value
-//#define Line_Cycles (Frame_Cycles/511)
-
-void spgUpdatePvr(u32 cycles);
-bool spg_Init();
-void spg_Term();
-void spg_Reset(bool Manual);
 void CalculateSync();
+void read_lightgun_position(int x, int y);
+void scheduleRenderDone(TA_context *cntx);
+void rescheduleSPG();

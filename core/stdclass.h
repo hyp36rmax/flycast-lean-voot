@@ -1,342 +1,277 @@
 #pragma once
 #include "types.h"
-#include <stdlib.h>
+#include "md5/md5.h"
+
+#include <algorithm>
+#include <cctype>
+#include <condition_variable>
+#include <cstring>
+#include <mutex>
+#include <thread>
 #include <vector>
-#include <string.h>
+#include <functional>
+#include <cassert>
+#include <time.h>
 
-#if HOST_OS!=OS_WINDOWS
-#include <pthread.h>
-#else
-#include <Windows.h>
-#endif
-
-
-#ifdef _ANDROID
-#include <sys/mman.h>
+#if defined(__ANDROID__)
 #undef PAGE_MASK
-#define PAGE_MASK (PAGE_SIZE-1)
-#else
+#endif
+#if defined(__ANDROID__) && (HOST_CPU == CPU_ARM64 || HOST_CPU == CPU_X64)
+#undef PAGE_SIZE
+extern const unsigned long PAGE_SIZE;
+#define MAX_PAGE_SIZE 16384
+#elif defined(__APPLE__) && defined(__aarch64__)
+#define PAGE_SIZE 16384
+#elif !defined(PAGE_SIZE)
 #define PAGE_SIZE 4096
+#endif
+#ifndef PAGE_MASK
 #define PAGE_MASK (PAGE_SIZE-1)
 #endif
-
-//Commonly used classes across the project
-//Simple Array class for helping me out ;P
-template<class T>
-class Array
-{
-public:
-	T* data;
-	u32 Size;
-
-	Array(T* Source,u32 ellements)
-	{
-		//initialise array
-		data=Source;
-		Size=ellements;
-	}
-
-	Array(u32 ellements)
-	{
-		//initialise array
-		data=0;
-		Resize(ellements,false);
-		Size=ellements;
-	}
-
-	Array(u32 ellements,bool zero)
-	{
-		//initialise array
-		data=0;
-		Resize(ellements,zero);
-		Size=ellements;
-	}
-
-	Array()
-	{
-		//initialise array
-		data=0;
-		Size=0;
-	}
-
-	~Array()
-	{
-		if  (data)
-		{
-			#ifdef MEM_ALLOC_TRACE
-			printf("WARNING : DESTRUCTOR WITH NON FREED ARRAY [arrayid:%d]\n",id);
-			#endif
-			Free();
-		}
-	}
-
-	void SetPtr(T* Source,u32 ellements)
-	{
-		//initialise array
-		Free();
-		data=Source;
-		Size=ellements;
-	}
-
-	T* Resize(u32 size,bool bZero)
-	{
-		if (size==0)
-		{
-			if (data)
-			{
-				#ifdef MEM_ALLOC_TRACE
-				printf("Freeing data -> resize to zero[Array:%d]\n",id);
-				#endif
-				Free();
-			}
-
-		}
-		
-		if (!data)
-			data=(T*)malloc(size*sizeof(T));
-		else
-			data=(T*)realloc(data,size*sizeof(T));
-
-		//TODO : Optimise this
-		//if we allocated more , Zero it out
-		if (bZero)
-		{
-			if (size>Size)
-			{
-				for (u32 i=Size;i<size;i++)
-				{
-					u8*p =(u8*)&data[i];
-					for (size_t j=0;j<sizeof(T);j++)
-					{
-						p[j]=0;
-					}
-				}
-			}
-		}
-		Size=size;
-
-		return data;
-	}
-
-	void Zero()
-	{
-		memset(data,0,sizeof(T)*Size);
-	}
-
-	void Free()
-	{
-		if (Size != 0)
-		{
-			if (data)
-				free(data);
-
-			data = NULL;
-		}
-	}
-
-
-	INLINE T& operator [](const u32 i)
-	{
-#ifdef MEM_BOUND_CHECK
-		if (i>=Size)
-		{
-			printf("Error: Array %d , index out of range (%d>%d)\n",id,i,Size-1);
-			MEM_DO_BREAK;
-		}
+#ifndef MAX_PAGE_SIZE
+#define MAX_PAGE_SIZE PAGE_SIZE
 #endif
-		return data[i];
-	}
-
-	INLINE T& operator [](const s32 i)
-	{
-#ifdef MEM_BOUND_CHECK
-		if (!(i>=0 && i<(s32)Size))
-		{
-			printf("Error: Array %d , index out of range (%d > %d)\n",id,i,Size-1);
-			MEM_DO_BREAK;
-		}
-#endif
-		return data[i];
-	}
-};
-
-//Windoze code
-//Threads
-
-typedef  void* ThreadEntryFP(void* param);
-
-typedef void* THREADHANDLE;
 
 class cThread
 {
 private:
-	ThreadEntryFP* Entry;
+	typedef void* ThreadEntryFP(void* param);
+	ThreadEntryFP* entry;
 	void* param;
-public :
-	THREADHANDLE hThread;
-	cThread(ThreadEntryFP* function,void* param);
-	
+	const char *name;
+
+public:
+	std::thread thread;
+
+	cThread(ThreadEntryFP* function, void* param, const char *name)
+		:entry(function), param(param), name(name) {}
+	~cThread() { WaitToEnd(); }
 	void Start();
 	void WaitToEnd();
 };
 
-//Wait Events
-typedef void* EVENTHANDLE;
 class cResetEvent
 {
-
 private:
-#if HOST_OS==OS_WINDOWS
-	EVENTHANDLE hEvent;
-#else
-	pthread_mutex_t mutx;
-	pthread_cond_t cond;
-
-#endif
+	std::mutex mutx;
+	std::condition_variable cond;
+	bool state;
 
 public :
-	bool state;
-	cResetEvent(bool State,bool Auto);
+	cResetEvent();
 	~cResetEvent();
 	void Set();		//Set state to signaled
 	void Reset();	//Set state to non signaled
-	void Wait(u32 msec);//Wait for signal , then reset[if auto]
+	bool Wait(u32 msec);//Wait for signal , then reset[if auto]. Returns false if timed out
 	void Wait();	//Wait for signal , then reset[if auto]
 };
 
-class cMutex
+void set_user_config_dir(const std::string& dir);
+void set_user_data_dir(const std::string& dir);
+void add_system_config_dir(const std::string& dir);
+void add_system_data_dir(const std::string& dir);
+
+std::string get_writable_config_path(const std::string& filename);
+std::string get_writable_data_path(const std::string& filename);
+std::string get_readonly_config_path(const std::string& filename);
+std::string get_readonly_data_path(const std::string& filename);
+bool file_exists(const std::string& filename);
+bool make_directory(const std::string& path);
+
+// returns a prefix for a game save file, for example: ~/.local/share/flycast/mvsc2.zip
+std::string get_game_save_prefix();
+// returns the position of the last path separator, or string::npos if none
+size_t get_last_slash_pos(const std::string& path);
+
+class RamRegion
 {
-private:
-#if HOST_OS==OS_WINDOWS
-	CRITICAL_SECTION cs;
-#else
-	pthread_mutex_t mutx;
-#endif
+	u8 *data;
+	size_t size;
+	bool ownsMemory = false;
 
-public :
-	bool state;
-	cMutex()
-	{
-#if HOST_OS==OS_WINDOWS
-		InitializeCriticalSection(&cs);
-#else
-		mutx=PTHREAD_MUTEX_INITIALIZER;
-#endif
-	}
-	~cMutex()
-	{
-#if HOST_OS==OS_WINDOWS
-		DeleteCriticalSection(&cs);
-#else
-		pthread_mutex_destroy(&mutx);
-#endif
-	}
-	void Lock()
-	{
-#if HOST_OS==OS_WINDOWS
-		EnterCriticalSection(&cs);
-#else
-		pthread_mutex_lock(&mutx);
-#endif
-	}
-	void Unlock()
-	{
-#if HOST_OS==OS_WINDOWS
-		LeaveCriticalSection(&cs);
-#else
-		pthread_mutex_unlock(&mutx);
-#endif
-	}
-};
-
-//Set the path !
-void SetHomeDir(const string& home);
-//subpath format: /data/fsca-table.bit
-string GetPath(const string& subpath);
-
-
-class VArray2
-{
 public:
+	void alloc(size_t size);
+	void free();
 
-	u8* data;
-	u32 size;
-	//void Init(void* data,u32 sz);
-	//void Term();
-	void LockRegion(u32 offset,u32 size);
-	void UnLockRegion(u32 offset,u32 size);
-
-	void Zero()
+	void setRegion(u8 *data, size_t size)
 	{
-		UnLockRegion(0,size);
-		memset(data,0,size);
+		this->data = data;
+		this->size = size;
+		ownsMemory = false;
 	}
 
-	INLINE u8& operator [](const u32 i)
-    {
-#ifdef MEM_BOUND_CHECK
-        if (i>=size)
-		{
-			printf("Error: VArray2 , index out of range (%d>%d)\n",i,size-1);
-			MEM_DO_BREAK;
-		}
-#endif
+	void zero() {
+		std::memset(data, 0, size);
+	}
+
+	u8& operator [](size_t i) {
 		return data[i];
     }
+
+	void serialize(Serializer &ser) const;
+	void deserialize(Deserializer &deser);
 };
 
-int ExeptionHandler(u32 dwCode, void* pExceptionPointers);
-int msgboxf(const wchar* text,unsigned int type,...);
+static inline void string_tolower(std::string& s)
+{
+	std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c){ return std::tolower(c); });
+}
 
+static inline void string_toupper(std::string& s)
+{
+	std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c){ return std::toupper(c); });
+}
 
-#define MBX_OK                       0x00000000L
-#define MBX_OKCANCEL                 0x00000001L
-#define MBX_ABORTRETRYIGNORE         0x00000002L
-#define MBX_YESNOCANCEL              0x00000003L
-#define MBX_YESNO                    0x00000004L
-#define MBX_RETRYCANCEL              0x00000005L
+static inline std::string get_file_extension(const std::string& s)
+{
+	size_t dot = s.find_last_of('.');
+	if (dot == std::string::npos)
+		return "";
+	std::string ext = s.substr(dot + 1, s.length() - dot - 1);
+	string_tolower(ext);
+	return ext;
+}
 
+static inline std::string get_file_basename(const std::string& s)
+{
+	size_t dot = s.find_last_of('.');
+	if (dot == std::string::npos)
+		return s;
+	return s.substr(0, dot);
+}
 
-#define MBX_ICONHAND                 0x00000010L
-#define MBX_ICONQUESTION             0x00000020L
-#define MBX_ICONEXCLAMATION          0x00000030L
-#define MBX_ICONASTERISK             0x00000040L
+extern const std::string defaultWs;
 
+static inline std::string trim_trailing_ws(const std::string& str,
+                 const std::string& whitespace = defaultWs)
+{
+    const auto strEnd = str.find_last_not_of(whitespace);
+	if (strEnd == std::string::npos)
+		return "";
 
-#define MBX_USERICON                 0x00000080L
-#define MBX_ICONWARNING              MBX_ICONEXCLAMATION
-#define MBX_ICONERROR                MBX_ICONHAND
+    return str.substr(0, strEnd + 1);
+}
 
+static inline std::string trim_ws(const std::string& str,
+                 const std::string& whitespace = defaultWs)
+{
+    const auto strStart = str.find_first_not_of(whitespace);
+	if (strStart == std::string::npos)
+		return "";
 
-#define MBX_ICONINFORMATION          MBX_ICONASTERISK
-#define MBX_ICONSTOP                 MBX_ICONHAND
+    return str.substr(strStart, str.find_last_not_of(whitespace) + 1 - strStart);
+}
 
-#define MBX_DEFBUTTON1               0x00000000L
-#define MBX_DEFBUTTON2               0x00000100L
-#define MBX_DEFBUTTON3               0x00000200L
+static inline bool isAbsolutePath(const std::string& path)
+{
+#ifdef _WIN32
+	if (path.length() >= 3 && std::isalpha(static_cast<u8>(path[0]))
+			&& path[1] == ':' && (path[2] == '/' || path[2] == '\\'))
+		return true;
+	if (!path.empty() && (path[0] == '/' || path[0] == '\\'))
+		return true;
+	return false;
+#else
+	return !path.empty() && path[0] == '/';
+#endif
+}
 
-#define MBX_DEFBUTTON4               0x00000300L
+template<typename ... Args>
+std::string strprintf(const char *format, Args ... args)
+{
+	int size = std::snprintf(nullptr, 0, format, args...);
+	std::string out(size + 1, '\0');
+	std::snprintf(out.data(), size + 1, format, args...);
+	out.resize(size);
+	return out;
+}
 
+class MD5Sum
+{
+	MD5_CTX ctx;
 
-#define MBX_APPLMODAL                0x00000000L
-#define MBX_SYSTEMMODAL              0x00001000L
-#define MBX_TASKMODAL                0x00002000L
+public:
+	MD5Sum() {
+		MD5_Init(&ctx);
+	}
 
-#define MBX_HELP                     0x00004000L // Help Button
+	MD5Sum& add(const void *data, unsigned long len) {
+		MD5_Update(&ctx, data, len);
+		return *this;
+	}
 
+	MD5Sum& add(std::FILE *file) {
+		std::fseek(file, 0, SEEK_SET);
+		char buf[4096];
+		unsigned long len = 0;
+		while ((len = (unsigned long)std::fread(buf, 1, sizeof(buf), file)) > 0)
+			MD5_Update(&ctx, buf, len);
+		return *this;
+	}
 
-#define MBX_NOFOCUS                  0x00008000L
-#define MBX_SETFOREGROUND            0x00010000L
-#define MBX_DEFAULT_DESKTOP_ONLY     0x00020000L
+	template<typename T>
+	MD5Sum& add(const T& v) {
+		MD5_Update(&ctx, &v, (unsigned long)sizeof(T));
+		return *this;
+	}
 
-#define MBX_TOPMOST                  0x00040000L
-#define MBX_RIGHT                    0x00080000L
-#define MBX_RTLREADING               0x00100000L
+	template<typename T>
+	MD5Sum& add(const std::vector<T>& v) {
+		MD5_Update(&ctx, v.data(), (unsigned long)(v.size() * sizeof(T)));
+		return *this;
+	}
 
-#define MBX_RV_OK                1
-#define MBX_RV_CANCEL            2
-#define MBX_RV_ABORT             3
-#define MBX_RV_RETRY             4
-#define MBX_RV_IGNORE            5
-#define MBX_RV_YES               6
-#define MBX_RV_NO                7
+	void getDigest(u8 digest[16]) {
+		MD5_Final(digest, &ctx);
+	}
+
+	std::vector<u8> getDigest() {
+		std::vector<u8> v(16);
+		MD5_Final(v.data(), &ctx);
+		return v;
+	}
+};
+
+u64 getTimeMs();
+std::string timeToISO8601(time_t time);
+std::string timeToShortDateTimeString(time_t time);
+
+class ThreadRunner
+{
+public:
+	void init() {
+		threadId = std::this_thread::get_id();
+	}
+	void term() {
+		threadId = {};
+	}
+	void runOnThread(std::function<void()> func)
+	{
+		if (threadId == std::thread::id{}
+			|| threadId == std::this_thread::get_id()) {
+			func();
+		}
+		else {
+			LockGuard _(mutex);
+			tasks.push_back(func);
+		}
+	}
+	void execTasks()
+	{
+		assert(threadId == std::this_thread::get_id());
+		std::vector<std::function<void()>> localTasks;
+		{
+			LockGuard _(mutex);
+			std::swap(localTasks, tasks);
+		}
+		for (auto& func : localTasks)
+			func();
+	}
+
+private:
+	using LockGuard = std::lock_guard<std::mutex>;
+
+	std::thread::id threadId;
+	std::vector<std::function<void()>> tasks;
+	std::mutex mutex;
+};

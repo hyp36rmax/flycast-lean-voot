@@ -1,469 +1,626 @@
-#include <math.h>
+#include "glcache.h"
 #include "gles.h"
-#include "rend/TexCache.h"
+#include "quad.h"
+#include "hw/pvr/ta.h"
+#ifndef LIBRETRO
+#include "ui/gui.h"
+#else
+#include "rend/gles/postprocess.h"
+#include "vmu_xhair.h"
+#endif
+#include "wsi/gl_context.h"
+#include "emulator.h"
+#include "naomi2.h"
+#include "oslib/i18n.h"
+
+#ifdef TEST_AUTOMATION
 #include "cfg/cfg.h"
-
-#ifdef TARGET_PANDORA
-#include <unistd.h>
-#include <fcntl.h>
-#include <sys/ioctl.h>
-#include <linux/fb.h>
-
-#ifndef FBIO_WAITFORVSYNC
-	#define FBIO_WAITFORVSYNC _IOW('F', 0x20, __u32)
-#endif
-int fbdev = -1;
 #endif
 
-/*
-GL|ES 2
-Slower, smaller subset of gl2
+#include <cmath>
+#include <memory>
 
-*Optimisation notes*
-Keep stuff in packed ints
-Keep data as small as possible
-Keep vertex programs as small as possible
-The drivers more or less suck. Don't depend on dynamic allocation, or any 'complex' feature
-as it is likely to be problematic/slow
-Do we really want to enable striping joins?
-
-*Design notes*
-Follow same architecture as the d3d renderer for now
-Render to texture, keep track of textures in GL memory
-Direct flip to screen (no vlbank/fb emulation)
-Do we really need a combining shader? it is needlessly expensive for openGL | ES
-Render contexts
-Free over time? we actually care about ram usage here?
-Limit max resource size? for psp 48k verts worked just fine
-
-FB:
-Pixel clip, mapping
-
-SPG/VO:
-mapping
-
-TA:
-Tile clip
-
-*/
-
-#include "oslib/oslib.h"
-#include "rend/rend.h"
-#include "hw/pvr/Renderer_if.h"
-
-void GenSorted();
-
-float fb_scale_x,fb_scale_y;
-
-volatile bool render_restart = false;
-
-#if 1
+#ifdef GLES
+#ifndef GL_RED
+#define GL_RED                            0x1903
+#endif
+#ifndef GL_MAJOR_VERSION
+#define GL_MAJOR_VERSION                  0x821B
+#endif
+#ifndef GL_MINOR_VERSION
+#define GL_MINOR_VERSION                  0x821C
+#endif
+#endif
 
 //Fragment and vertex shaders code
-//pretty much 1:1 copy of the d3d ones for now
-const char* VertexShaderSource = "\
-/* Vertex constants*/  \n\
-uniform highp vec4      scale; \n\
-uniform highp vec4      depth_scale; \n\
-uniform highp float sp_FOG_DENSITY; \n\
-/* Vertex output */ \n\
-attribute highp vec4    in_pos; \n\
-attribute lowp vec4     in_base; \n\
-attribute lowp vec4     in_offs; \n\
-attribute mediump vec2  in_uv; \n\
-/* Transformed input */ \n\
-varying lowp vec4 vtx_base; \n\
-varying lowp vec4 vtx_offs; \n\
-varying mediump vec2 vtx_uv; \n\
-varying highp vec3 vtx_xyz; \n\
-void main() \n\
-{ \n\
-	vtx_base=in_base; \n\
-	vtx_offs=in_offs; \n\
-	vtx_uv=in_uv; \n\
-	vec4 vpos=in_pos; \n\
-	vtx_xyz.xy = vpos.xy;  \n\
-	vtx_xyz.z = vpos.z*sp_FOG_DENSITY;  \n\
-	vpos.w=1.0/vpos.z;  \n\
-	vpos.xy=vpos.xy*scale.xy-scale.zw;  \n\
-	vpos.xy*=vpos.w;  \n\
-	vpos.z=depth_scale.x+depth_scale.y*vpos.w;  \n\
-	gl_Position = vpos; \n\
-}";
 
+const char* ShaderCompatSource = R"(
+#define GLES2 0 							
+#define GLES3 1 							
+#define GL2 2								
+#define GL3 3								
+											
+#if TARGET_GL == GL2 						
+#define highp								
+#define lowp								
+#define mediump								
+#endif										
+#if TARGET_GL == GLES3						
+out highp vec4 FragColor;					
+#define gl_FragColor FragColor				
+#define FOG_CHANNEL r						
+#elif TARGET_GL == GL3						
+out highp vec4 FragColor;					
+#define gl_FragColor FragColor				
+#define FOG_CHANNEL r						
+#else										
+#define texture texture2D					
+#define FOG_CHANNEL a						
+#endif										
+)";
 
+const char *VertexCompatShader = R"(
+#if TARGET_GL == GLES2 || TARGET_GL == GL2
+#define in attribute
+#define out varying
+#endif
+)";
+
+const char *PixelCompatShader = R"(
+#if TARGET_GL == GLES2 || TARGET_GL == GL2
+#define in varying
+#endif
+)";
+
+const char* GouraudSource = R"(
+#if (TARGET_GL == GL3 || TARGET_GL == GLES3) && pp_Gouraud == 0
+	#define INTERPOLATION flat
 #else
+	#define INTERPOLATION
+#endif
+)";
 
+static const char* VertexShaderSource = R"(
+/* Vertex constants*/ 
+uniform highp vec4 depth_scale;
+uniform highp mat4 ndcMat;
+uniform highp float sp_FOG_DENSITY;
 
+/* Vertex input */
+in highp vec4 in_pos;
+in lowp vec4 in_base;
+in lowp vec4 in_offs;
+in highp vec2 in_uv;
+/* output */
+INTERPOLATION out highp vec4 vtx_base;
+INTERPOLATION out highp vec4 vtx_offs;
+out highp vec3 vtx_uv;
 
-const char* VertexShaderSource = 
-				""
-				"/* Test Projection Matrix */"
-				""
-				"uniform highp mat4  Projection;"
-				""
-				""
-				"/* Vertex constants */"
-				""
-				"uniform highp float sp_FOG_DENSITY;"
-				"uniform highp vec4  scale;"
-				""
-				"/* Vertex output */"
-				""
-				"attribute highp   vec4 in_pos;"
-				"attribute lowp    vec4 in_base;"
-				"attribute lowp    vec4 in_offs;"
-				"attribute mediump vec2 in_uv;"
-				""
-				"/* Transformed input */"
-				""
-				"varying lowp    vec4 vtx_base;"
-				"varying lowp    vec4 vtx_offs;"
-				"varying mediump vec2 vtx_uv;"
-				"varying highp   vec3 vtx_xyz;"
-				""
-				"void main()"
-				"{"
-				"  vtx_base = in_base;"
-				"  vtx_offs = in_offs;"
-				"  vtx_uv   = in_uv;"
-				""
-				"  vec4 vpos  = in_pos;"
-				"  vtx_xyz.xy = vpos.xy; "
-				"  vtx_xyz.z  = vpos.z*sp_FOG_DENSITY; "
-				""
-				"  vpos.w     = 1.0/vpos.z; "
-				"  vpos.z    *= -scale.w; "
-				"  vpos.xy    = vpos.xy*scale.xy-sign(scale.xy); "
-				"  vpos.xy   *= vpos.w; "
-				""
-				"  gl_Position = vpos;"
-			//	"  gl_Position = vpos * Projection;"
-				"}"
-				;
+void main()
+{
+	highp vec4 vpos = ndcMat * in_pos;
+	vtx_base = in_base;
+	vtx_offs = in_offs;
+#if TARGET_GL == GLES2
+	vtx_uv = vec3(in_uv, vpos.z * sp_FOG_DENSITY);
+	vpos.w = 1.0 / vpos.z;
+	vpos.z = depth_scale.x + depth_scale.y * vpos.w;
+	vpos.xy *= vpos.w;
+#else
+	#if DIV_POS_Z == 1
+		vpos /= vpos.z;
+		vpos.z = vpos.w;
+	#endif
+	#if pp_Gouraud == 1 && DIV_POS_Z != 1
+		vtx_base *= vpos.z;
+		vtx_offs *= vpos.z;
+	#endif
+	vtx_uv = vec3(in_uv, vpos.z);
+	#if DIV_POS_Z != 1
+		vtx_uv.xy *= vpos.z;
+		vpos.w = 1.0;
+		vpos.z = 0.0;
+	#endif
+#endif
+	gl_Position = vpos;
+}
+)";
 
+const char* PixelPipelineShader = R"(
+#define PI 3.1415926
+
+/* Shader program params*/
+/* gles has no alpha test stage, so its emulated on the shader */
+uniform highp float cp_AlphaTestValue;
+uniform lowp vec4 pp_ClipTest;
+uniform lowp vec3 sp_FOG_COL_RAM,sp_FOG_COL_VERT;
+uniform highp float sp_FOG_DENSITY;
+uniform sampler2D tex,fog_table;
+uniform lowp float trilinear_alpha;
+uniform lowp vec4 fog_clamp_min;
+uniform lowp vec4 fog_clamp_max;
+#if pp_Palette != 0
+uniform sampler2D palette;
+uniform mediump int palette_index;
+#if TARGET_GL == GLES2 || TARGET_GL == GL2
+uniform lowp vec2 texSize;
+#endif
+#endif
+#if DITHERING == 1
+uniform lowp vec4 ditherDivisor;
+#endif
+
+/* Vertex input*/
+INTERPOLATION in highp vec4 vtx_base;
+INTERPOLATION in highp vec4 vtx_offs;
+in highp vec3 vtx_uv;
+
+lowp float fog_mode2(highp float w)
+{
+	highp float z = clamp(
+#if TARGET_GL == GLES2
+						  vtx_uv.z
+#elif DIV_POS_Z == 1
+						  sp_FOG_DENSITY / w
+#else
+						  sp_FOG_DENSITY * w
+#endif
+											, 1.0, 255.9999);
+	mediump float exp = floor(log2(z));
+	highp float m = z * 16.0 / pow(2.0, exp) - 16.0;
+	mediump float idx = floor(m) + exp * 16.0 + 0.5;
+	highp vec4 fog_coef = texture(fog_table, vec2(idx / 128.0, 0.75 - (m - floor(m)) / 2.0));
+	return fog_coef.FOG_CHANNEL;
+}
+
+highp vec4 fog_clamp(lowp vec4 col)
+{
+#if FogClamping == 1
+	return clamp(col, fog_clamp_min, fog_clamp_max);
+#else
+	return col;
+#endif
+}
+
+#if pp_Palette != 0
+
+lowp vec4 getPaletteEntry(highp float colorIndex)
+{
+	highp int color_idx = int(floor(colorIndex * 255.0 + 0.5)) + palette_index;
+#if TARGET_GL == GLES2 || TARGET_GL == GL2
+    highp vec2 c = vec2((mod(float(color_idx), 32.0) * 2.0 + 1.0) / 64.0, (float(color_idx / 32) * 2.0 + 1.0) / 64.0);
+	return texture(palette, c);
+#else
+    highp ivec2 c = ivec2(color_idx % 32, color_idx / 32);
+	return texelFetch(palette, c, 0);
+#endif
+}
 
 #endif
 
+#if pp_Palette == 1		// Nearest filtering
 
-
-
-
-
-/*
-
-cp_AlphaTest 0 1        2 2
-pp_ClipTestMode -1 0 1  3 6
-pp_UseAlpha  0 1        2 12
-pp_Texture 1
-	pp_IgnoreTexA 0 1       2   2
-	pp_ShadInstr 0 1 2 3    4   8
-	pp_Offset 0 1           2   16
-	pp_FogCtrl 0 1 2 3      4   64
-pp_Texture 0
-	pp_FogCtrl 0 2 3        4   4
-
-pp_Texture: off -> 12*4=48 shaders
-pp_Texture: on  -> 12*64=768 shaders
-Total: 816 shaders
-
-highp float fdecp(highp float flt,out highp float e)  \n\
-{  \n\
-	highp float lg2=log2(flt);  //ie , 2.5  \n\
-	highp float frc=fract(lg2); //ie , 0.5  \n\
-	e=lg2-frc;                  //ie , 2.5-0.5=2 (exp)  \n\
-	return pow(2.0,frc);        //2^0.5 (manitsa)  \n\
-}  \n\
-lowp float fog_mode2(highp float invW)  \n\
-{  \n\
-	highp float foginvW=invW;  \n\
-	foginvW=clamp(foginvW,1.0,255.0);  \n\
-	  \n\
-	highp float fogexp;                                 //0 ... 7  \n\
-	highp float fogman=fdecp(foginvW, fogexp);          //[1,2) mantissa bits. that is 1.m  \n\
-	  \n\
-	highp float fogman_hi=fogman*16.0-16.0;             //[16,32) -16 -> [0,16)  \n\
-	highp float fogman_idx=floor(fogman_hi);            //[0,15]  \n\
-	highp float fogman_blend=fract(fogman_hi);          //[0,1) -- can also be fogman_idx-fogman_idx !  \n\
-	highp float fog_idx_fr=fogexp*16.0+fogman_idx;      //[0,127]  \n\
-	  \n\
-	highp float fog_idx_pixel_fr=fog_idx_fr+0.5;  \n\
-	highp float fog_idx_pixel_n=fog_idx_pixel_fr/128.0;//normalise to [0.5/128,127.5/128) coordinates  \n\
-  \n\
-	//fog is 128x1 texure  \n\
-	lowp vec2 fog_coefs=texture2D(fog_table,vec2(fog_idx_pixel_n)).rg;  \n\
-  \n\
-	lowp float fog_coef=mix(fog_coefs.r,fog_coefs.g,fogman_blend);  \n\
-	  \n\
-	return fog_coef;  \n\
-} \n\
-*/
-
-const char* PixelPipelineShader = "\
-\
-#define cp_AlphaTest %d \n\
-#define pp_ClipTestMode %d.0 \n\
-#define pp_UseAlpha %d \n\
-#define pp_Texture %d \n\
-#define pp_IgnoreTexA %d \n\
-#define pp_ShadInstr %d \n\
-#define pp_Offset %d \n\
-#define pp_FogCtrl %d \n\
-/* Shader program params*/ \n\
-/* gles has no alpha test stage, so its emulated on the shader */ \n\
-uniform lowp float cp_AlphaTestValue; \n\
-uniform lowp vec4 pp_ClipTest; \n\
-uniform lowp vec3 sp_FOG_COL_RAM,sp_FOG_COL_VERT; \n\
-uniform highp vec2 sp_LOG_FOG_COEFS; \n\
-uniform sampler2D tex,fog_table; \n\
-/* Vertex input*/ \n\
-varying lowp vec4 vtx_base; \n\
-varying lowp vec4 vtx_offs; \n\
-varying mediump vec2 vtx_uv; \n\
-varying highp vec3 vtx_xyz; \n\
-lowp float fog_mode2(highp float val) \n\
-{ \n\
-	highp float fog_idx=clamp(val,0.0,127.99); \n\
-	return clamp(sp_LOG_FOG_COEFS.y*log2(fog_idx)+sp_LOG_FOG_COEFS.x,0.001,1.0); //the clamp is required due to yet another bug !\n\
-} \n\
-void main() \n\
-{ \n\
-	lowp vec4 color=vtx_base; \n\
-	#if pp_UseAlpha==0 \n\
-		color.a=1.0; \n\
-	#endif\n\
-	#if pp_FogCtrl==3 \n\
-		color=vec4(sp_FOG_COL_RAM.rgb,fog_mode2(vtx_xyz.z)); \n\
-	#endif\n\
-	#if pp_Texture==1 \n\
-	{ \n\
-		lowp vec4 texcol=texture2D(tex,vtx_uv); \n\
-		\n\
-		#if pp_IgnoreTexA==1 \n\
-			texcol.a=1.0;	 \n\
-		#endif\n\
-		\n\
-		#if pp_ShadInstr==0 \n\
-		{ \n\
-			color.rgb=texcol.rgb; \n\
-			color.a=texcol.a; \n\
-		} \n\
-		#endif\n\
-		#if pp_ShadInstr==1 \n\
-		{ \n\
-			color.rgb*=texcol.rgb; \n\
-			color.a=texcol.a; \n\
-		} \n\
-		#endif\n\
-		#if pp_ShadInstr==2 \n\
-		{ \n\
-			color.rgb=mix(color.rgb,texcol.rgb,texcol.a); \n\
-		} \n\
-		#endif\n\
-		#if  pp_ShadInstr==3 \n\
-		{ \n\
-			color*=texcol; \n\
-		} \n\
-		#endif\n\
-		\n\
-		#if pp_Offset==1 \n\
-		{ \n\
-			color.rgb+=vtx_offs.rgb; \n\
-			if (pp_FogCtrl==1) \n\
-				color.rgb=mix(color.rgb,sp_FOG_COL_VERT.rgb,vtx_offs.a); \n\
-		} \n\
-		#endif\n\
-	} \n\
-	#endif\n\
-	#if pp_FogCtrl==0 \n\
-	{ \n\
-		color.rgb=mix(color.rgb,sp_FOG_COL_RAM.rgb,fog_mode2(vtx_xyz.z));  \n\
-	} \n\
-	#endif\n\
-	#if cp_AlphaTest == 1 \n\
-		if (cp_AlphaTestValue>color.a) discard;\n\
-	#endif  \n\
-	//color.rgb=vec3(vtx_xyz.z/255.0);\n\
-	gl_FragColor=color; \n\
-}";
-
-const char* ModifierVolumeShader = " \
-uniform lowp float sp_ShaderColor; \n\
-/* Vertex input*/ \n\
-void main() \n\
-{ \n\
-	gl_FragColor=vec4(0.0, 0.0, 0.0, sp_ShaderColor); \n\
-}";
-
-const char* OSD_Shader = " \
-varying lowp vec4 vtx_base; \n\
-varying mediump vec2 vtx_uv; \n\
-/* Vertex input*/ \n\
-uniform sampler2D tex; \n\
-void main() \n\
-{ \n\
-	mediump vec2 uv=vtx_uv; \n\
-	uv.y=1.0-uv.y; \n\
-	gl_FragColor=vtx_base*texture2D(tex,uv); \n\n\
-}";
-
-
-gl_ctx gl;
-
-int screen_width;
-int screen_height;
-
-// Create a basic GLES context
-bool gl_init(EGLNativeWindowType wind, EGLNativeDisplayType disp)
+lowp vec4 palettePixel(highp vec3 coords)
 {
-#if !defined(_ANDROID)
-	gl.setup.native_wind=wind;
-	gl.setup.native_disp=disp;
+#if TARGET_GL == GLES2 || TARGET_GL == GL2 || DIV_POS_Z == 1
+	return getPaletteEntry(texture(tex, coords.xy).FOG_CHANNEL);
+#else
+	return getPaletteEntry(textureProj(tex, coords).FOG_CHANNEL);
+#endif
 
-	//try to get a display
-	gl.setup.display = eglGetDisplay(gl.setup.native_disp);
+}
 
-	//if failed, get the default display (this will not happen in win32)
-	if(gl.setup.display == EGL_NO_DISPLAY)
-		gl.setup.display = eglGetDisplay((EGLNativeDisplayType) EGL_DEFAULT_DISPLAY);
+#elif pp_Palette == 2		// Bi-linear filtering
 
-	
-	// Initialise EGL
-	EGLint maj, min;
-	if (!eglInitialize(gl.setup.display, &maj, &min))
-	{
-		printf("EGL Error: eglInitialize failed\n");
-		return false;
-	}
+lowp vec4 palettePixelBilinear(highp vec3 coords)
+{
+#if TARGET_GL != GLES2 && TARGET_GL != GL2 && DIV_POS_Z != 1
+	coords.xy /= coords.z;
+#endif
+#if TARGET_GL != GLES2 && TARGET_GL != GL2
+	lowp vec2 texSize = vec2(textureSize(tex, 0));
+#endif
+	highp vec2 pixCoord = coords.xy * texSize - 0.5;		// coordinates of top left pixel
+	highp vec2 originPixCoord = floor(pixCoord);
 
-	printf("Info: EGL version %d.%d\n",maj,min);
+	highp vec2 sampleUV = (originPixCoord + 0.5) / texSize;	// UV coordinates of center of top left pixel
 
+    // Sample from all surrounding texels
+    lowp vec4 c00 = getPaletteEntry(texture(tex, sampleUV).FOG_CHANNEL);
+#if TARGET_GL != GLES2 && TARGET_GL != GL2
+    lowp vec4 c01 = getPaletteEntry(textureOffset(tex, sampleUV, ivec2(0, 1)).FOG_CHANNEL);
+    lowp vec4 c11 = getPaletteEntry(textureOffset(tex, sampleUV, ivec2(1, 1)).FOG_CHANNEL);
+    lowp vec4 c10 = getPaletteEntry(textureOffset(tex, sampleUV, ivec2(1, 0)).FOG_CHANNEL);
+#else
+	sampleUV = (originPixCoord + vec2(0.5, 1.5)) / texSize;
+    lowp vec4 c01 = getPaletteEntry(texture(tex, sampleUV).FOG_CHANNEL);
+	sampleUV = (originPixCoord + vec2(1.5, 1.5)) / texSize;
+    lowp vec4 c11 = getPaletteEntry(texture(tex, sampleUV).FOG_CHANNEL);
+	sampleUV = (originPixCoord + vec2(1.5, 0.5)) / texSize;
+    lowp vec4 c10 = getPaletteEntry(texture(tex, sampleUV).FOG_CHANNEL);
+#endif
 
+	highp vec2 weight = pixCoord - originPixCoord;
 
-	EGLint pi32ConfigAttribs[]  = { EGL_SURFACE_TYPE, EGL_WINDOW_BIT, EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT , EGL_DEPTH_SIZE, 24, EGL_STENCIL_SIZE, 8, EGL_NONE };
-	EGLint pi32ContextAttribs[] = { EGL_CONTEXT_CLIENT_VERSION, 2 , EGL_NONE };
-	
-	int num_config;
-
-	EGLConfig config;
-	if (!eglChooseConfig(gl.setup.display, pi32ConfigAttribs, &config, 1, &num_config) || (num_config != 1))
-	{
-		printf("EGL Error: eglChooseConfig failed\n");
-		return false;
-	}
-
-	gl.setup.surface = eglCreateWindowSurface(gl.setup.display, config, wind, NULL);
-
-	if (eglCheck())
-		return false;
-
-	eglBindAPI(EGL_OPENGL_ES_API);
-	if (eglCheck())
-		return false;
-
-	gl.setup.context = eglCreateContext(gl.setup.display, config, NULL, pi32ContextAttribs);
-
-	if (eglCheck())
-		return false;
+    // Bi-linear mixing
+    lowp vec4 temp0 = mix(c00, c10, weight.x);
+    lowp vec4 temp1 = mix(c01, c11, weight.x);
+    return mix(temp0, temp1, weight.y);
+}
 
 #endif
 
-	eglMakeCurrent(gl.setup.display, gl.setup.surface, gl.setup.surface, gl.setup.context);
+#if TARGET_GL == GLES2
+#define depth gl_FragCoord.w
+#else
+#define depth vtx_uv.z
+#endif
 
-	if (eglCheck())
-		return false;
-
-	EGLint w,h;
-	eglQuerySurface(gl.setup.display, gl.setup.surface, EGL_WIDTH, &w);
-	eglQuerySurface(gl.setup.display, gl.setup.surface, EGL_HEIGHT, &h);
-
-	screen_width=w;
-	screen_height=h;
-
-	printf("EGL config: %08X, %08X, %08X %dx%d\n",gl.setup.context,gl.setup.display,gl.setup.surface,w,h);
-	return true;
-}
-
-void egl_stealcntx()
+void main()
 {
-	gl.setup.context=eglGetCurrentContext();
-	gl.setup.display=eglGetCurrentDisplay();
-	gl.setup.surface=eglGetCurrentSurface(EGL_DRAW);
-}
-
-//swap buffers
-void gl_swap()
-{
-	#ifdef TARGET_PANDORA0
-	if (fbdev >= 0)
+	// Clip inside the box
+	#if pp_ClipInside == 1
+		if (gl_FragCoord.x >= pp_ClipTest.x && gl_FragCoord.x <= pp_ClipTest.z
+				&& gl_FragCoord.y >= pp_ClipTest.y && gl_FragCoord.y <= pp_ClipTest.w)
+			discard;
+	#endif
+	
+	highp vec4 color = vtx_base;
+	highp vec4 offset = vtx_offs;
+	#if pp_Gouraud == 1 && TARGET_GL != GLES2 && DIV_POS_Z != 1
+		color /= vtx_uv.z;
+		offset /= vtx_uv.z;
+	#endif
+	#if pp_UseAlpha==0
+		color.a=1.0;
+	#endif
+	#if pp_FogCtrl==3
+		color = vec4(sp_FOG_COL_RAM.rgb, fog_mode2(depth));
+	#endif
+	#if pp_Texture==1
 	{
-		int arg = 0;
-		ioctl(fbdev,FBIO_WAITFORVSYNC,&arg);
+		#if pp_Palette == 0
+		  #if TARGET_GL == GLES2 || TARGET_GL == GL2 || DIV_POS_Z == 1
+			lowp vec4 texcol = texture(tex, vtx_uv.xy);
+		  #else
+			lowp vec4 texcol = textureProj(tex, vtx_uv);
+		  #endif
+		#elif pp_Palette == 1
+			lowp vec4 texcol = palettePixel(vtx_uv);
+		#else
+			lowp vec4 texcol = palettePixelBilinear(vtx_uv);
+		#endif
+		
+		#if pp_BumpMap == 1
+			highp float s = PI / 2.0 * (texcol.a * 15.0 * 16.0 + texcol.r * 15.0) / 255.0;
+			highp float r = 2.0 * PI * (texcol.g * 15.0 * 16.0 + texcol.b * 15.0) / 255.0;
+			texcol.a = clamp(offset.a + offset.r * sin(s) + offset.g * cos(s) * cos(r - 2.0 * PI * offset.b), 0.0, 1.0);
+			texcol.rgb = vec3(1.0, 1.0, 1.0);	
+		#else
+			#if pp_IgnoreTexA==1
+				texcol.a=1.0;	
+			#endif
+		#endif
+		#if pp_ShadInstr==0
+		{
+			color=texcol;
+		}
+		#endif
+		#if pp_ShadInstr==1
+		{
+			color.rgb*=texcol.rgb;
+			color.a=texcol.a;
+		}
+		#endif
+		#if pp_ShadInstr==2
+		{
+			color.rgb=mix(color.rgb,texcol.rgb,texcol.a);
+		}
+		#endif
+		#if  pp_ShadInstr==3
+		{
+			color*=texcol;
+		}
+		#endif
+		
+		#if pp_Offset==1 && pp_BumpMap == 0
+			color.rgb += offset.rgb;
+		#endif
 	}
 	#endif
-	eglSwapBuffers(gl.setup.display, gl.setup.surface);
-}
-
-//destroy the gles context and free resources
-void gl_term()
-{
-#if HOST_OS==OS_WINDOWS
-	ReleaseDC((HWND)gl.setup.native_wind,(HDC)gl.setup.native_disp);
-#endif
-#ifdef TARGET_PANDORA
-	eglMakeCurrent( gl.setup.display, NULL, NULL, EGL_NO_CONTEXT );
-	if (gl.setup.context)
-		eglDestroyContext(gl.setup.display, gl.setup.context);	
-	if (gl.setup.surface)
-		eglDestroySurface(gl.setup.display, gl.setup.surface);
-	if (gl.setup.display)
-		eglTerminate(gl.setup.display);
-	if (fbdev>=0)
-		close( fbdev );
 	
-	fbdev=-1;
-	gl.setup.context=0;
-	gl.setup.surface=0;
-	gl.setup.display=0;
+	color = fog_clamp(color);
+	
+	#if pp_FogCtrl == 0
+		color.rgb = mix(color.rgb, sp_FOG_COL_RAM.rgb, fog_mode2(depth)); 
+	#endif
+	#if pp_FogCtrl == 1 && pp_Offset==1 && pp_BumpMap == 0
+		color.rgb = mix(color.rgb, sp_FOG_COL_VERT.rgb, offset.a);
+	#endif
+	
+	#if pp_TriLinear == 1
+	color *= trilinear_alpha;
+	#endif
+	
+	#if cp_AlphaTest == 1
+		color.a = floor(color.a * 255.0 + 0.5) / 255.0;
+		if (cp_AlphaTestValue > color.a)
+			discard;
+		color.a = 1.0;
+	#endif 
+
+	//color.rgb = vec3(vtx_uv.z * sp_FOG_DENSITY / 128.0);
+#if TARGET_GL != GLES2
+#if DIV_POS_Z == 1
+	highp float w = 100000.0 / vtx_uv.z;
+#else
+	highp float w = 100000.0 * vtx_uv.z;
 #endif
+	gl_FragDepth = log2(1.0 + max(w, -0.999999)) / 34.0;
+
+#if DITHERING == 1
+	mediump float ditherTable[16] = float[](
+		5., 13.,  7., 15.,
+		9.,  1., 11.,  3.,
+		6., 14.,  4., 12.,
+		10., 2.,  8.,  0.
+	);
+	mediump float r = ditherTable[int(mod(gl_FragCoord.y, 4.)) * 4 + int(mod(gl_FragCoord.x, 4.))];
+	mediump vec4 dv = vec4(r, r, r, 1.) / ditherDivisor;
+	color = clamp(floor(color * 255. + dv) / 255., 0., 1.);
+#endif
+#endif
+	gl_FragColor = color;
 }
+)";
 
+static const char* ModifierVolumeShader = R"(
+uniform lowp float sp_ShaderColor;
 
-struct ShaderUniforms_t
+/* Vertex input*/
+in highp vec3 vtx_uv;
+
+void main()
 {
-	float PT_ALPHA;
-	float scale_coefs[4];
-	float depth_coefs[4];
-	float fog_den_float;
-	float ps_FOG_COL_RAM[3];
-	float ps_FOG_COL_VERT[3];
-	float fog_coefs[2];
+#if TARGET_GL != GLES2
+#if DIV_POS_Z == 1
+	highp float w = 100000.0 / vtx_uv.z;
+#else
+	highp float w = 100000.0 * vtx_uv.z;
+#endif
+	gl_FragDepth = log2(1.0 + max(w, -0.999999)) / 34.0;
+#endif
+	gl_FragColor=vec4(0.0, 0.0, 0.0, sp_ShaderColor);
+}
+)";
 
-	void Set(PipelineShader* s)
+void os_VideoRoutingTermGL();
+
+GLCache glcache;
+gl_ctx gl;
+
+GLuint fogTextureId;
+GLuint paletteTextureId;
+
+#ifdef TEST_AUTOMATION
+void do_swap_automation()
+{
+	static FILE* video_file = fopen(config::loadStr("record", "rawvid").c_str(), "wb");
+	extern bool do_screenshot;
+
+	GlFramebuffer *framebuffer = gl.ofbo2.ready ? gl.ofbo2.framebuffer.get() : gl.ofbo.framebuffer.get();
+	if (framebuffer == nullptr)
+		return;
+	int bytesz = framebuffer->getWidth() * framebuffer->getHeight() * 3;
+	if (video_file)
 	{
-		if (s->cp_AlphaTestValue!=-1)
-			glUniform1f(s->cp_AlphaTestValue,PT_ALPHA);
+		u8* img = new u8[bytesz];
 		
-		if (s->scale!=-1)
-			glUniform4fv( s->scale, 1, scale_coefs);
-		
-		if (s->depth_scale!=-1)
-			glUniform4fv( s->depth_scale, 1, depth_coefs);
-		
-		if (s->sp_FOG_DENSITY!=-1)
-			glUniform1f( s->sp_FOG_DENSITY,fog_den_float);
-
-		if (s->sp_FOG_COL_RAM!=-1)
-			glUniform3fv( s->sp_FOG_COL_RAM, 1, ps_FOG_COL_RAM);
-		
-		if (s->sp_FOG_COL_VERT!=-1)
-			glUniform3fv( s->sp_FOG_COL_VERT, 1, ps_FOG_COL_VERT);
-
-		if (s->sp_LOG_FOG_COEFS!=-1)
-			glUniform2fv(s->sp_LOG_FOG_COEFS,1, fog_coefs);
+		framebuffer->bind(GL_READ_FRAMEBUFFER);
+		glReadPixels(0, 0, framebuffer->getWidth(), framebuffer->getHeight(), GL_RGB, GL_UNSIGNED_BYTE, img);
+		fwrite(img, 1, bytesz, video_file);
+		delete[] img;
+		fflush(video_file);
 	}
 
-} ShaderUniforms;
+	if (do_screenshot)
+	{
+		u8* img = new u8[bytesz];
+		
+		framebuffer->bind(GL_READ_FRAMEBUFFER);
+		glPixelStorei(GL_PACK_ALIGNMENT, 1);
+		glReadPixels(0, 0, framebuffer->getWidth(), framebuffer->getHeight(), GL_RGB, GL_UNSIGNED_BYTE, img);
+		dump_screenshot(img, framebuffer->getWidth(), framebuffer->getHeight());
+		delete[] img;
+		dc_exit();
+		void sdl_window_destroy();
+		sdl_window_destroy(); // avoid crash
+		flycast_term();
+		exit(0);
+	}
+}
+
+#endif
+
+static void gl_delete_shaders()
+{
+	for (const auto& it : gl.shaders)
+	{
+		if (it.second.program != 0)
+			glcache.DeleteProgram(it.second.program);
+	}
+	gl.shaders.clear();
+	glcache.DeleteProgram(gl.modvol_shader.program);
+	gl.modvol_shader.program = 0;
+	glcache.DeleteProgram(gl.n2ModVolShader.program);
+	gl.n2ModVolShader.program = 0;
+}
+
+void termGLCommon()
+{
+#ifdef VIDEO_ROUTING
+	os_VideoRoutingTermGL();
+#endif
+	gl.quadDrawer.reset();
+
+	// palette, fog
+	glcache.DeleteTextures(1, &fogTextureId);
+	fogTextureId = 0;
+	glcache.DeleteTextures(1, &paletteTextureId);
+	paletteTextureId = 0;
+	// RTT
+	gl.rtt.framebuffer.reset();
+
+	gl.ofbo.framebuffer.reset();
+	glcache.DeleteTextures(1, &gl.dcfb.tex);
+	gl.dcfb.tex = 0;
+	gl.ofbo2.framebuffer.reset();
+	gl.fbscaling.framebuffer.reset();
+	gl.videorouting.framebuffer.reset();
+	termVmuLightgun();
+#ifdef LIBRETRO
+	postProcessor.term();
+#endif
+}
+
+static void gles_term()
+{
+	gl.vbo.mainVAO.term();
+	gl.vbo.modvolVAO.term();
+	gl.vbo.geometry.reset();
+	gl.vbo.modvols.reset();
+	gl.vbo.idxs.reset();
+	termGLCommon();
+
+	gl_delete_shaders();
+	// Restore the gl context to a decent state in case of exception
+	if (gl.ofbo.origFbo != 0)
+		glBindFramebuffer(GL_FRAMEBUFFER, gl.ofbo.origFbo);
+	glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+	glActiveTexture(GL_TEXTURE0);
+}
+
+bool testBlitFramebuffer();
+
+void findGLVersion()
+{
+	gl.index_type = GL_UNSIGNED_INT;
+	gl.gl_major = GLGraphicsContext::Instance()->getMajorVersion();
+	gl.gl_minor = GLGraphicsContext::Instance()->getMinorVersion();
+	gl.is_gles = GLGraphicsContext::Instance()->isGLES();
+	if (gl.is_gles)
+	{
+		gl.border_clamp_supported = false;
+		if (gl.gl_major >= 3)
+		{
+			gl.gl_version = "GLES3";
+			gl.glsl_version_header = "#version 300 es";
+			if (gl.gl_major > 3 || gl.gl_minor >= 2)
+		    	gl.border_clamp_supported = true;
+			gl.prim_restart_supported = false;
+			gl.prim_restart_fixed_supported = true;
+			gl.single_channel_format = GL_RED;
+		}
+		else
+		{
+			gl.gl_version = "GLES2";
+			gl.glsl_version_header = "";
+			gl.index_type = GL_UNSIGNED_SHORT;
+			gl.prim_restart_supported = false;
+			gl.prim_restart_fixed_supported = false;
+			gl.single_channel_format = GL_ALPHA;
+		}
+		const char *extensions = (const char *)glGetString(GL_EXTENSIONS);
+		if (strstr(extensions, "GL_OES_packed_depth_stencil") != NULL)
+			gl.GL_OES_packed_depth_stencil_supported = true;
+		if (strstr(extensions, "GL_OES_depth24") != NULL)
+			gl.GL_OES_depth24_supported = true;
+		if (!gl.GL_OES_packed_depth_stencil_supported && gl.gl_major < 3)
+			INFO_LOG(RENDERER, "Packed depth/stencil not supported: no modifier volumes when rendering to a texture");
+		GLint ranges[2];
+		GLint precision;
+		glGetShaderPrecisionFormat(GL_FRAGMENT_SHADER, GL_HIGH_FLOAT, ranges, &precision);
+		gl.highp_float_supported = (ranges[0] != 0 || ranges[1] != 0) && precision != 0;
+		if (!gl.border_clamp_supported)
+			gl.border_clamp_supported = strstr(extensions, "GL_EXT_texture_border_clamp") != nullptr;
+	}
+	else
+	{
+    	if (gl.gl_major >= 3)
+    	{
+			gl.gl_version = "GL3";
+#if defined(__APPLE__)
+			gl.glsl_version_header = "#version 150";
+#else
+			gl.glsl_version_header = "#version 130";
+#endif
+			gl.single_channel_format = GL_RED;
+			gl.prim_restart_supported = gl.gl_major > 3 || gl.gl_minor >= 1; // 3.1 min
+			gl.prim_restart_fixed_supported = gl.gl_major > 4
+					|| (gl.gl_major == 4 && gl.gl_minor >= 3);				// 4.3 min
+		}
+		else
+		{
+			gl.gl_version = "GL2";
+			gl.glsl_version_header = "#version 120";
+			gl.single_channel_format = GL_ALPHA;
+			gl.prim_restart_supported = false;
+			gl.prim_restart_fixed_supported = false;
+		}
+    	gl.highp_float_supported = true;
+    	gl.border_clamp_supported = true;
+	}
+	gl.max_anisotropy = 1.f;
+#if !defined(GLES2)
+	if (gl.gl_major >= 3)
+	{
+		bool anisotropicExtension = false;
+		const char *extensions = (const char *)glGetString(GL_EXTENSIONS);
+		// glGetString(GL_EXTENSIONS) is deprecated and might return NULL in core contexts.
+		// In that case, use glGetStringi instead
+		if (extensions == nullptr)
+		{
+			GLint n = 0;
+			glGetIntegerv(GL_NUM_EXTENSIONS, &n);
+			for (GLint i = 0; i < n; i++)
+			{
+				const char* extension = (const char *)glGetStringi(GL_EXTENSIONS, i);
+				if (!strcmp(extension, "GL_EXT_texture_filter_anisotropic"))
+				{
+					anisotropicExtension = true;
+					break;
+				}
+			}
+		}
+		else if (strstr(extensions, "GL_EXT_texture_filter_anisotropic") != nullptr)
+			anisotropicExtension = true;
+		if (anisotropicExtension)
+			glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY, &gl.max_anisotropy);
+	}
+#endif
+	const char *vendor = (const char *)glGetString(GL_VENDOR);
+	const char *renderer = (const char *)glGetString(GL_RENDERER);
+	gl.mesa_nouveau = !stricmp(vendor, "nouveau")
+			|| (!stricmp(vendor, "Mesa") && !strncmp(renderer, "NV", 2));
+	gl.mali = !stricmp(vendor, "arm");
+	NOTICE_LOG(RENDERER, "OpenGL%s version %d.%d", gl.is_gles ? " ES" : "", gl.gl_major, gl.gl_minor);
+	NOTICE_LOG(RENDERER, "Vendor '%s' Renderer '%s' Version '%s'", vendor, renderer, glGetString(GL_VERSION));
+	while (glGetError() != GL_NO_ERROR)
+		;
+	gl.bogusBlitFramebuffer = true;	// not supported in GL/GLES 2
+#ifndef GLES2
+	if (gl.gl_major >= 3)
+	{
+		gl.bogusBlitFramebuffer = !testBlitFramebuffer();
+		if (gl.bogusBlitFramebuffer)
+			WARN_LOG(RENDERER, "glBlitFramebuffer is bogus. Using quad drawer instead");
+		else
+			NOTICE_LOG(RENDERER, "glBlitFramebuffer test successful");
+	}
+#endif
+}
+
+struct ShaderUniforms_t ShaderUniforms;
 
 GLuint gl_CompileShader(const char* shader,GLuint type)
 {
@@ -479,13 +636,11 @@ GLuint gl_CompileShader(const char* shader,GLuint type)
 
 	if (!result && compile_log_len>0)
 	{
-		if (compile_log_len==0)
-			compile_log_len=1;
 		char* compile_log=(char*)malloc(compile_log_len);
 		*compile_log=0;
 
 		glGetShaderInfoLog(rv, compile_log_len, &compile_log_len, compile_log);
-		printf("Shader: %s \n%s\n",result?"compiled!":"failed to compile",compile_log);
+		WARN_LOG(RENDERER, "Shader: %s \n%s", result ? "compiled!" : "failed to compile", compile_log);
 
 		free(compile_log);
 	}
@@ -493,11 +648,11 @@ GLuint gl_CompileShader(const char* shader,GLuint type)
 	return rv;
 }
 
-GLuint gl_CompileAndLink(const char* VertexShader, const char* FragmentShader)
+GLuint gl_CompileAndLink(const char *vertexShader, const char *fragmentShader)
 {
 	//create shaders
-	GLuint vs=gl_CompileShader(VertexShader ,GL_VERTEX_SHADER);
-	GLuint ps=gl_CompileShader(FragmentShader ,GL_FRAGMENT_SHADER);
+	GLuint vs = gl_CompileShader(vertexShader, GL_VERTEX_SHADER);
+	GLuint ps = gl_CompileShader(fragmentShader, GL_FRAGMENT_SHADER);
 
 	GLuint program = glCreateProgram();
 	glAttachShader(program, vs);
@@ -508,81 +663,163 @@ GLuint gl_CompileAndLink(const char* VertexShader, const char* FragmentShader)
 	glBindAttribLocation(program, VERTEX_COL_BASE_ARRAY, "in_base");
 	glBindAttribLocation(program, VERTEX_COL_OFFS_ARRAY, "in_offs");
 	glBindAttribLocation(program, VERTEX_UV_ARRAY,       "in_uv");
+	// Per-pixel attributes
+	glBindAttribLocation(program, VERTEX_COL_BASE1_ARRAY, "in_base1");
+	glBindAttribLocation(program, VERTEX_COL_OFFS1_ARRAY, "in_offs1");
+	glBindAttribLocation(program, VERTEX_UV1_ARRAY,       "in_uv1");
+	// Naomi 2
+	glBindAttribLocation(program, VERTEX_NORM_ARRAY,     "in_normal");
+
+#ifndef GLES
+	if (!gl.is_gles && gl.gl_major >= 3)
+		glBindFragDataLocation(program, 0, "FragColor");
+#endif
 
 	glLinkProgram(program);
 
 	GLint result;
 	glGetProgramiv(program, GL_LINK_STATUS, &result);
 
-
 	GLint compile_log_len;
 	glGetProgramiv(program, GL_INFO_LOG_LENGTH, &compile_log_len);
 
 	if (!result && compile_log_len>0)
 	{
-		if (compile_log_len==0)
-			compile_log_len=1;
+		compile_log_len+= 1024;
 		char* compile_log=(char*)malloc(compile_log_len);
 		*compile_log=0;
 
 		glGetProgramInfoLog(program, compile_log_len, &compile_log_len, compile_log);
-		printf("Shader linking: %s \n%s\n",result?"linked":"failed to link",compile_log);
+		WARN_LOG(RENDERER, "Shader linking: %s \n (%d bytes), - %s -", result ? "linked" : "failed to link", compile_log_len, compile_log);
 
 		free(compile_log);
-		die("shader compile fail\n");
-	}
 
+		// Dump the shaders source for troubleshooting
+		INFO_LOG(RENDERER, "// VERTEX SHADER\n%s\n// END", vertexShader);
+		INFO_LOG(RENDERER, "// FRAGMENT SHADER\n%s\n// END", fragmentShader);
+		throw RendererException(i18n::T("OpenGL shader compilation failed"));
+		// FIXME MINIDUMP-8A1, MINIDUMP-8A2, MINIDUMP-7YE
+	}
+	glDetachShader(program, vs);
+	glDetachShader(program, ps);
 	glDeleteShader(vs);
 	glDeleteShader(ps);
 
-	glUseProgram(program);
-
-	verify(glIsProgram(program));
+	glcache.UseProgram(program);
 
 	return program;
 }
 
-int GetProgramID(u32 cp_AlphaTest, u32 pp_ClipTestMode,
-							u32 pp_Texture, u32 pp_UseAlpha, u32 pp_IgnoreTexA, u32 pp_ShadInstr, u32 pp_Offset,
-							u32 pp_FogCtrl)
+PipelineShader *GetProgram(bool cp_AlphaTest, bool pp_InsideClipping,
+		bool pp_Texture, bool pp_UseAlpha, bool pp_IgnoreTexA, u32 pp_ShadInstr, bool pp_Offset,
+		u32 pp_FogCtrl, bool pp_Gouraud, bool pp_BumpMap, bool fog_clamping, bool trilinear,
+		int palette, bool naomi2, bool dithering)
 {
 	u32 rv=0;
 
-	rv|=pp_ClipTestMode;
-	rv<<=1; rv|=cp_AlphaTest;
-	rv<<=1; rv|=pp_Texture;
-	rv<<=1; rv|=pp_UseAlpha;
-	rv<<=1; rv|=pp_IgnoreTexA;
-	rv<<=2; rv|=pp_ShadInstr;
-	rv<<=1; rv|=pp_Offset;
-	rv<<=2; rv|=pp_FogCtrl;
+	rv |= pp_InsideClipping;
+	rv <<= 1; rv |= cp_AlphaTest;
+	rv <<= 1; rv |= pp_Texture;
+	rv <<= 1; rv |= pp_UseAlpha;
+	rv <<= 1; rv |= pp_IgnoreTexA;
+	rv <<= 2; rv |= pp_ShadInstr;
+	rv <<= 1; rv |= pp_Offset;
+	rv <<= 2; rv |= pp_FogCtrl;
+	rv <<= 1; rv |= pp_Gouraud;
+	rv <<= 1; rv |= pp_BumpMap;
+	rv <<= 1; rv |= fog_clamping;
+	rv <<= 1; rv |= trilinear;
+	rv <<= 2; rv |= palette;
+	rv <<= 1; rv |= naomi2;
+	rv <<= 1, rv |= !settings.platform.isNaomi2() && config::NativeDepthInterpolation;
+	rv <<= 1; rv |= dithering;
 
-	return rv;
+	PipelineShader *shader = &gl.shaders[rv];
+	if (shader->program == 0)
+	{
+		shader->cp_AlphaTest = cp_AlphaTest;
+		shader->pp_InsideClipping = pp_InsideClipping;
+		shader->pp_Texture = pp_Texture;
+		shader->pp_UseAlpha = pp_UseAlpha;
+		shader->pp_IgnoreTexA = pp_IgnoreTexA;
+		shader->pp_ShadInstr = pp_ShadInstr;
+		shader->pp_Offset = pp_Offset;
+		shader->pp_FogCtrl = pp_FogCtrl;
+		shader->pp_Gouraud = pp_Gouraud;
+		shader->pp_BumpMap = pp_BumpMap;
+		shader->fog_clamping = fog_clamping;
+		shader->trilinear = trilinear;
+		shader->palette = palette;
+		shader->naomi2 = naomi2;
+		shader->divPosZ = !settings.platform.isNaomi2() && config::NativeDepthInterpolation;
+		shader->dithering = dithering;
+		CompilePipelineShader(shader);
+	}
+
+	return shader;
 }
 
-bool CompilePipelineShader(	PipelineShader* s)
+class VertexSource : public OpenGlSource
 {
-	char pshader[8192];
-	
-	sprintf(pshader,PixelPipelineShader,
-                s->cp_AlphaTest,s->pp_ClipTestMode,s->pp_UseAlpha,
-                s->pp_Texture,s->pp_IgnoreTexA,s->pp_ShadInstr,s->pp_Offset,s->pp_FogCtrl);
+public:
+	VertexSource(bool gouraud, bool divPosZ) : OpenGlSource() {
+		addConstant("pp_Gouraud", gouraud);
+		addConstant("DIV_POS_Z", divPosZ);
 
-	s->program=gl_CompileAndLink(VertexShaderSource,pshader);
+		addSource(VertexCompatShader);
+		addSource(GouraudSource);
+		addSource(VertexShaderSource);
+	}
+};
 
+class FragmentShaderSource : public OpenGlSource
+{
+public:
+	FragmentShaderSource(const PipelineShader* s) : OpenGlSource()
+	{
+		addConstant("cp_AlphaTest", s->cp_AlphaTest);
+		addConstant("pp_ClipInside", s->pp_InsideClipping);
+		addConstant("pp_UseAlpha", s->pp_UseAlpha);
+		addConstant("pp_Texture", s->pp_Texture);
+		addConstant("pp_IgnoreTexA", s->pp_IgnoreTexA);
+		addConstant("pp_ShadInstr", s->pp_ShadInstr);
+		addConstant("pp_Offset", s->pp_Offset);
+		addConstant("pp_FogCtrl", s->pp_FogCtrl);
+		addConstant("pp_Gouraud", s->pp_Gouraud);
+		addConstant("pp_BumpMap", s->pp_BumpMap);
+		addConstant("FogClamping", s->fog_clamping);
+		addConstant("pp_TriLinear", s->trilinear);
+		addConstant("pp_Palette", s->palette);
+		addConstant("DIV_POS_Z", s->divPosZ);
+		addConstant("DITHERING", s->dithering);
+
+		addSource(PixelCompatShader);
+		addSource(GouraudSource);
+		addSource(PixelPipelineShader);
+	}
+};
+
+bool CompilePipelineShader(PipelineShader* s)
+{
+	std::string vertexShader;
+	if (s->naomi2)
+		vertexShader = N2VertexSource(s->pp_Gouraud, false, s->pp_Texture).generate();
+	else
+		vertexShader = VertexSource(s->pp_Gouraud, s->divPosZ).generate();
+	FragmentShaderSource fragmentSource(s);
+
+	s->program = gl_CompileAndLink(vertexShader.c_str(), fragmentSource.generate().c_str());
 
 	//setup texture 0 as the input for the shader
-	GLuint gu=glGetUniformLocation(s->program, "tex");
+	GLint gu = glGetUniformLocation(s->program, "tex");
 	if (s->pp_Texture==1)
 		glUniform1i(gu,0);
 
 	//get the uniform locations
-	s->scale	            = glGetUniformLocation(s->program, "scale");
 	s->depth_scale      = glGetUniformLocation(s->program, "depth_scale");
-	
-	
+
 	s->pp_ClipTest      = glGetUniformLocation(s->program, "pp_ClipTest");
-	
+
 	s->sp_FOG_DENSITY   = glGetUniformLocation(s->program, "sp_FOG_DENSITY");
 
 	s->cp_AlphaTestValue= glGetUniformLocation(s->program, "cp_AlphaTestValue");
@@ -595,981 +832,536 @@ bool CompilePipelineShader(	PipelineShader* s)
 	if (s->pp_FogCtrl==0 || s->pp_FogCtrl==3)
 	{
 		s->sp_FOG_COL_RAM=glGetUniformLocation(s->program, "sp_FOG_COL_RAM");
-		s->sp_LOG_FOG_COEFS=glGetUniformLocation(s->program, "sp_LOG_FOG_COEFS");
 	}
 	else
 	{
 		s->sp_FOG_COL_RAM=-1;
-		s->sp_LOG_FOG_COEFS=-1;
 	}
+	// Setup texture 1 as the fog table
+	gu = glGetUniformLocation(s->program, "fog_table");
+	if (gu != -1)
+		glUniform1i(gu, 1);
+	// And texture 2 as palette
+	gu = glGetUniformLocation(s->program, "palette");
+	if (gu != -1)
+		glUniform1i(gu, 2);
+	s->palette_index = glGetUniformLocation(s->program, "palette_index");
 
+	s->trilinear_alpha = glGetUniformLocation(s->program, "trilinear_alpha");
+	
+	if (s->fog_clamping)
+	{
+		s->fog_clamp_min = glGetUniformLocation(s->program, "fog_clamp_min");
+		s->fog_clamp_max = glGetUniformLocation(s->program, "fog_clamp_max");
+	}
+	else
+	{
+		s->fog_clamp_min = -1;
+		s->fog_clamp_max = -1;
+	}
+	s->ndcMat = glGetUniformLocation(s->program, "ndcMat");
+	s->ditherDivisor = glGetUniformLocation(s->program, "ditherDivisor");
+	s->texSize = glGetUniformLocation(s->program, "texSize");
+
+	if (s->naomi2)
+		initN2Uniforms(s);
 
 	ShaderUniforms.Set(s);
 
-	return glIsProgram(s->program)==GL_TRUE;
-}
-
-GLuint osd_tex;
-
-bool gl_create_resources()
-{
-	//create vbos
-	glGenBuffers(1, &gl.vbo.geometry);
-	glGenBuffers(1, &gl.vbo.modvols);
-	glGenBuffers(1, &gl.vbo.idxs);
-	glGenBuffers(1, &gl.vbo.idxs2);
-
-	memset(gl.pogram_table,0,sizeof(gl.pogram_table));
-
-	PipelineShader* dshader=0;
-	u32 compile=0;
-#define forl(name,max) for(u32 name=0;name<=max;name++)
-	forl(cp_AlphaTest,1)
-	{
-		forl(pp_ClipTestMode,2)
-		{
-			forl(pp_UseAlpha,1)
-			{
-				forl(pp_Texture,1)
-				{
-					forl(pp_FogCtrl,3)
-					{
-						forl(pp_IgnoreTexA,1)
-						{
-							forl(pp_ShadInstr,3)
-							{
-								forl(pp_Offset,1)
-								{
-									dshader=&gl.pogram_table[GetProgramID(cp_AlphaTest,pp_ClipTestMode,pp_Texture,pp_UseAlpha,pp_IgnoreTexA,
-															pp_ShadInstr,pp_Offset,pp_FogCtrl)];
-
-									dshader->cp_AlphaTest = cp_AlphaTest;
-									dshader->pp_ClipTestMode = pp_ClipTestMode-1;
-									dshader->pp_Texture = pp_Texture;
-									dshader->pp_UseAlpha = pp_UseAlpha;
-									dshader->pp_IgnoreTexA = pp_IgnoreTexA;
-									dshader->pp_ShadInstr = pp_ShadInstr;
-									dshader->pp_Offset = pp_Offset;
-									dshader->pp_FogCtrl = pp_FogCtrl;
-									dshader->program = -1;
-								}
-							}
-						}
-					}
-				}
-			}
-		}
-	}
-
-
-	
-	gl.modvol_shader.program=gl_CompileAndLink(VertexShaderSource,ModifierVolumeShader);
-	gl.modvol_shader.scale          = glGetUniformLocation(gl.modvol_shader.program, "scale");
-	gl.modvol_shader.sp_ShaderColor = glGetUniformLocation(gl.modvol_shader.program, "sp_ShaderColor");
-	gl.modvol_shader.depth_scale    = glGetUniformLocation(gl.modvol_shader.program, "depth_scale");
-
-	
-	gl.OSD_SHADER.program=gl_CompileAndLink(VertexShaderSource,OSD_Shader);
-	printf("OSD: %d\n",gl.OSD_SHADER.program);
-	gl.OSD_SHADER.scale=glGetUniformLocation(gl.OSD_SHADER.program, "scale");
-	gl.OSD_SHADER.depth_scale=glGetUniformLocation(gl.OSD_SHADER.program, "depth_scale");
-	glUniform1i(glGetUniformLocation(gl.OSD_SHADER.program, "tex"),0);		//bind osd texture to slot 0
-
-	//#define PRECOMPILE_SHADERS
-	#ifdef PRECOMPILE_SHADERS
-	for (u32 i=0;i<sizeof(gl.pogram_table)/sizeof(gl.pogram_table[0]);i++)
-	{
-		if (!CompilePipelineShader(	&gl.pogram_table[i] ))
-			return false;
-	}
-	#endif
-
-	int w, h;
-	osd_tex=loadPNG(GetPath("/data/buttons.png"),w,h);
-
 	return true;
 }
 
-//create a basic gles context
-bool gl_init(EGLNativeWindowType wind, EGLNativeDisplayType disp);
+static void create_modvol_shader()
+{
+	if (gl.modvol_shader.program != 0)
+		return;
+	VertexSource vertexShader(false, config::NativeDepthInterpolation);
 
-//swap buffers
-void gl_swap();
-//destroy the gles context and free resources
-void gl_term();
+	OpenGlSource fragmentShader;
+	fragmentShader.addConstant("pp_Gouraud", 0)
+			.addConstant("DIV_POS_Z", config::NativeDepthInterpolation)
+			.addSource(PixelCompatShader)
+			.addSource(GouraudSource)
+			.addSource(ModifierVolumeShader);
+
+	gl.modvol_shader.program = gl_CompileAndLink(vertexShader.generate().c_str(), fragmentShader.generate().c_str());
+	gl.modvol_shader.ndcMat = glGetUniformLocation(gl.modvol_shader.program, "ndcMat");
+	gl.modvol_shader.sp_ShaderColor = glGetUniformLocation(gl.modvol_shader.program, "sp_ShaderColor");
+	gl.modvol_shader.depth_scale = glGetUniformLocation(gl.modvol_shader.program, "depth_scale");
+
+	if (gl.gl_major >= 3)
+	{
+		N2VertexSource n2vertexShader(false, true, false);
+		fragmentShader.setConstant("DIV_POS_Z", false);
+		gl.n2ModVolShader.program = gl_CompileAndLink(n2vertexShader.generate().c_str(), fragmentShader.generate().c_str());
+		gl.n2ModVolShader.ndcMat = glGetUniformLocation(gl.n2ModVolShader.program, "ndcMat");
+		gl.n2ModVolShader.sp_ShaderColor = glGetUniformLocation(gl.n2ModVolShader.program, "sp_ShaderColor");
+		gl.n2ModVolShader.depth_scale = glGetUniformLocation(gl.n2ModVolShader.program, "depth_scale");
+		gl.n2ModVolShader.mvMat = glGetUniformLocation(gl.n2ModVolShader.program, "mvMat");
+		gl.n2ModVolShader.projMat = glGetUniformLocation(gl.n2ModVolShader.program, "projMat");
+	}
+}
+
+static void gl_create_resources()
+{
+	if (gl.vbo.geometry != nullptr)
+		// Assume the resources have already been created
+		return;
+
+	findGLVersion();
+
+#ifndef LIBRETRO
+	if (gl.gl_major >= 3)
+		// will be used later. Better fail fast
+		if (glGenVertexArrays == nullptr) {
+			ERROR_LOG(RENDERER, "glGenVertexArrays function is null");
+			throw RendererException("OpenGL initialization failed");
+		}
+
+#endif
+
+	//create vbos
+	gl.vbo.geometry = std::make_unique<GlBuffer>(GL_ARRAY_BUFFER);
+	gl.vbo.modvols = std::make_unique<GlBuffer>(GL_ARRAY_BUFFER);
+	gl.vbo.idxs = std::make_unique<GlBuffer>(GL_ELEMENT_ARRAY_BUFFER);
+
+	gl.quadDrawer = std::make_unique<GlQuadDrawer>();
+}
 
 GLuint gl_CompileShader(const char* shader,GLuint type);
 
-bool gl_create_resources();
-
 //setup
 
-
-bool gles_init()
+#ifndef __APPLE__
+void gl_DebugOutput(GLenum source,
+        GLenum type,
+        GLuint id,
+        GLenum severity,
+        GLsizei length,
+        const GLchar *message,
+        const void *userParam)
 {
-	if (!gl_init((EGLNativeWindowType)libPvr_GetRenderTarget(),
-		         (EGLNativeDisplayType)libPvr_GetRenderSurface()))
-			return false;
-
-	if (!gl_create_resources())
-		return false;
-
-	
-	#ifdef TARGET_PANDORA
-	fbdev=open("/dev/fb0", O_RDONLY);
-	#else
-	eglSwapInterval(gl.setup.display,1);
-	#endif
-
-	//clean up all buffers ...
-	for (int i=0;i<10;i++)
+	if (id == 131185)
+		return;
+	switch (severity)
 	{
-		glClearColor(0.f, 0.f, 0.f, 0.f);
-		glClear(GL_COLOR_BUFFER_BIT);
-		gl_swap();
+	default:
+	case GL_DEBUG_SEVERITY_NOTIFICATION:
+	case GL_DEBUG_SEVERITY_LOW:
+		DEBUG_LOG(RENDERER, "opengl:[%d] %s", id, message);
+		break;
+	case GL_DEBUG_SEVERITY_MEDIUM:
+		INFO_LOG(RENDERER, "opengl:[%d] %s", id, message);
+		break;
+	case GL_DEBUG_SEVERITY_HIGH:
+		WARN_LOG(RENDERER, "opengl:[%d] %s", id, message);
+		break;
 	}
+}
+#endif
+
+bool OpenGLRenderer::Init()
+{
+	glcache.EnableCache();
+
+	gl_create_resources();
+
+#if 0
+	glEnable(GL_DEBUG_OUTPUT);
+	glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
+#ifdef GLES
+	glDebugMessageCallback((RGLGENGLDEBUGPROC)gl_DebugOutput, NULL);
+#else
+    glDebugMessageCallback(gl_DebugOutput, NULL);
+#endif
+	glDebugMessageControl(GL_DONT_CARE, GL_DONT_CARE, GL_DONT_CARE, 0, NULL, GL_TRUE);
+#endif
+
+#if defined(GL_GENERATE_MIPMAP_HINT) && !defined(__SWITCH__)
+	if (gl.is_gles)
+		glHint(GL_GENERATE_MIPMAP_HINT, GL_FASTEST);
+#endif
+	glCheck();
+
+	if (config::TextureUpscale > 1)
+	{
+		// Trick to preload the tables used by xBRZ
+		u32 src[] { 0x11111111, 0x22222222, 0x33333333, 0x44444444 };
+		u32 dst[16];
+		UpscalexBRZ(2, src, dst, 2, 2, false);
+	}
+	updateFogTable = true;
+	TextureCacheData::SetDirectXColorOrder(false);
+	TextureCacheData::setUploadToGPUFlavor();
 
 	return true;
 }
 
-
-
-float fog_coefs[]={0,0};
-void tryfit(float* x,float* y)
+static void updateFogTexture(u8 *fog_table, GLenum texture_slot, GLint fog_image_format)
 {
-	//y=B*ln(x)+A
-	
-	double sylnx=0,sy=0,slnx=0,slnx2=0;
-
-	u32 cnt=0;
-
-	for (int i=0;i<128;i++)
+	glActiveTexture(texture_slot);
+	if (fogTextureId == 0)
 	{
-		int rep=1;
-
-		//discard values clipped to 0 or 1
-		if (i<128 && y[i]==1 && y[i+1]==1)
-			continue;
-
-		if (i>0 && y[i]==0 && y[i-1]==0)
-			continue;
-		
-		//Add many samples for first and last value (fog-in, fog-out -> important)
-		if (i>0 && y[i]!=1 && y[i-1]==1)
-			rep=10000;
-
-		if (i<128 && y[i]!=0 && y[i+1]==0)
-			rep=10000;
-		
-		for (int j=0;j<rep;j++)
-		{
-			cnt++;
-			sylnx+=y[i]*log((double)x[i]);
-			sy+=y[i];
-			slnx+=log((double)x[i]);
-			slnx2+=log((double)x[i])*log((double)x[i]);
-		}
+		fogTextureId = glcache.GenTexture();
+		glcache.BindTexture(GL_TEXTURE_2D, fogTextureId);
+		glcache.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+		glcache.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+		glcache.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+		glcache.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+	}
+	else {
+		glcache.BindTexture(GL_TEXTURE_2D, fogTextureId);
 	}
 
-	double a,b;
-	b=(cnt*sylnx-sy*slnx)/(cnt*slnx2-slnx*slnx);
-	a=(sy-b*slnx)/(cnt);
+	u8 temp_tex_buffer[256];
+	MakeFogTexture(temp_tex_buffer);
 
+	glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+	GLint internalformat;
+	if (gl.is_gles && fog_image_format == GL_RED)
+		internalformat = GL_R8;
+	else
+		internalformat = fog_image_format;
+	glTexImage2D(GL_TEXTURE_2D, 0, internalformat, 128, 2, 0, fog_image_format, GL_UNSIGNED_BYTE, temp_tex_buffer);
+	glCheck();
 
-	//We use log2 and not ln on calculations	//B*log(x)+A
-	//log2(x)=log(x)/log(2)
-	//log(x)=log2(x)*log(2)
-	//B*log(2)*log(x)+A
-	b*=logf(2.0);
+	glActiveTexture(GL_TEXTURE0);
+}
 
-	float maxdev=0;
-	for (int i=0;i<128;i++)
+static void updatePaletteTexture(GLenum texture_slot)
+{
+	glActiveTexture(texture_slot);
+	if (paletteTextureId == 0)
 	{
-		float diff=min(max(b*logf(x[i])/logf(2.0)+a,(double)0),(double)1)-y[i];
-		maxdev=max((float)abs(diff),(float)maxdev);
+		paletteTextureId = glcache.GenTexture();
+		glcache.BindTexture(GL_TEXTURE_2D, paletteTextureId);
+		glcache.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+		glcache.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+		glcache.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+		glcache.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 	}
-	printf("FOG TABLE Curve match: maxdev: %.02f cents\n",maxdev*100);
-	fog_coefs[0]=a;
-	fog_coefs[1]=b;
-	//printf("%f\n",B*log(maxdev)/log(2.0)+A);
+	else {
+		glcache.BindTexture(GL_TEXTURE_2D, paletteTextureId);
+	}
+
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 32, 32, 0, GL_RGBA, GL_UNSIGNED_BYTE, palette32_ram);
+	glCheck();
+
+	glActiveTexture(GL_TEXTURE0);
 }
 
-
-
-extern u16 kcode[4];
-extern u8 rt[4],lt[4];
-
-#define key_CONT_C           (1 << 0)
-#define key_CONT_B           (1 << 1)
-#define key_CONT_A           (1 << 2)
-#define key_CONT_START       (1 << 3)
-#define key_CONT_DPAD_UP     (1 << 4)
-#define key_CONT_DPAD_DOWN   (1 << 5)
-#define key_CONT_DPAD_LEFT   (1 << 6)
-#define key_CONT_DPAD_RIGHT  (1 << 7)
-#define key_CONT_Z           (1 << 8)
-#define key_CONT_Y           (1 << 9)
-#define key_CONT_X           (1 << 10)
-#define key_CONT_D           (1 << 11)
-#define key_CONT_DPAD2_UP    (1 << 12)
-#define key_CONT_DPAD2_DOWN  (1 << 13)
-#define key_CONT_DPAD2_LEFT  (1 << 14)
-#define key_CONT_DPAD2_RIGHT (1 << 15)
-
-u32 osd_base;
-u32 osd_count;
-
-
-#if defined(_ANDROID)
-extern float vjoy_pos[14][8];
-#else
-
-float vjoy_pos[14][8]=
+void OpenGLRenderer::drawOSD()
 {
-	{24+0,24+64,64,64},     //LEFT
-	{24+64,24+0,64,64},     //UP
-	{24+128,24+64,64,64},   //RIGHT
-	{24+64,24+128,64,64},   //DOWN
-
-	{440+0,280+64,64,64},   //X
-	{440+64,280+0,64,64},   //Y
-	{440+128,280+64,64,64}, //B
-	{440+64,280+128,64,64}, //A
-
-	{320-32,360+32,64,64},  //Start
-
-	{440,200,90,64},        //RT
-	{542,200,90,64},        //LT
-
-	{-24,128+224,128,128},  //ANALOG_RING
-	{96,320,64,64},         //ANALOG_POINT
-	{1}
-};
-#endif // !_ANDROID
-
-float vjoy_sz[2][14] = {
-	{ 64,64,64,64, 64,64,64,64, 64, 90,90, 128, 64 },
-	{ 64,64,64,64, 64,64,64,64, 64, 64,64, 128, 64 },
-};
-
-static void DrawButton(float* xy, u32 state)
-{
-	Vertex vtx;
-
-	vtx.z=1;
-
-	float x=xy[0];
-	float y=xy[1];
-	float w=xy[2];
-	float h=xy[3];
-
-	vtx.col[0]=vtx.col[1]=vtx.col[2]=(0x7F-0x40*state/255)*vjoy_pos[13][0];
-
-	vtx.col[3]=0xA0*vjoy_pos[13][4];
-
-	vjoy_pos[13][4]+=(vjoy_pos[13][0]-vjoy_pos[13][4])/2;
-
-	
-	
-	vtx.x=x; vtx.y=y;
-	vtx.u=xy[4]; vtx.v=xy[5];
-	*pvrrc.verts.Append()=vtx;
-
-	vtx.x=x+w; vtx.y=y;
-	vtx.u=xy[6]; vtx.v=xy[5];
-	*pvrrc.verts.Append()=vtx;
-
-	vtx.x=x; vtx.y=y+h;
-	vtx.u=xy[4]; vtx.v=xy[7];
-	*pvrrc.verts.Append()=vtx;
-
-	vtx.x=x+w; vtx.y=y+h;
-	vtx.u=xy[6]; vtx.v=xy[7];
-	*pvrrc.verts.Append()=vtx;
-
-	osd_count+=4;
+	drawVmusAndCrosshairs(width, height);
+#ifndef LIBRETRO
+	gui_display_osd();
+#endif
 }
 
-static void ClearBG()
+void OpenGLRenderer::Process(TA_context* ctx)
 {
+	if (gl.gl_major < 3 && settings.platform.isNaomi2())
+		throw RendererException(i18n::T("OpenGL ES 3.0+ required for Naomi 2"));
+	gl.rendContext = &ctx->rend;
+	if (resetTextureCache) {
+		TexCache.Clear();
+		resetTextureCache = false;
+	}
+	TexCache.Cleanup();
 
+	if (updateFogTable && config::Fog) {
+		updateFogTable = false;
+		updateFogTexture((u8 *)FOG_TABLE, getFogTextureSlot(), gl.single_channel_format);
+	}
+	if (updatePalette) {
+		updatePaletteTexture(getPaletteTextureSlot());
+		updatePalette = false;
+	}
+	if (!ctx->rend.isRTT && ctx->rend.swapInterval > 0)
+		GraphicsContext::Instance()->setSwapInterval(ctx->rend.swapInterval);
+	ta_parse(ctx, gl.prim_restart_fixed_supported || gl.prim_restart_supported);
 }
 
-
-void DrawButton2(float* xy, bool state) { DrawButton(xy,state?0:255); }
-
-static void OSD_HOOK()
+static void upload_vertex_indices()
 {
-	osd_base=pvrrc.verts.used();
-	osd_count=0;
-
-	DrawButton2(vjoy_pos[0],kcode[0]&key_CONT_DPAD_LEFT);
-	DrawButton2(vjoy_pos[1],kcode[0]&key_CONT_DPAD_UP);
-	DrawButton2(vjoy_pos[2],kcode[0]&key_CONT_DPAD_RIGHT);
-	DrawButton2(vjoy_pos[3],kcode[0]&key_CONT_DPAD_DOWN);
-
-	DrawButton2(vjoy_pos[4],kcode[0]&key_CONT_X);
-	DrawButton2(vjoy_pos[5],kcode[0]&key_CONT_Y);
-	DrawButton2(vjoy_pos[6],kcode[0]&key_CONT_B);
-	DrawButton2(vjoy_pos[7],kcode[0]&key_CONT_A);
-
-	DrawButton2(vjoy_pos[8],kcode[0]&key_CONT_START);
-
-	DrawButton(vjoy_pos[9],lt[0]);
-
-	DrawButton(vjoy_pos[10],rt[0]);
-
-	DrawButton2(vjoy_pos[11],1);
-	DrawButton2(vjoy_pos[12],0);
-}
-
-extern GLuint osd_tex;
-
-#define OSD_TEX_W 512
-#define OSD_TEX_H 256
-
-void OSD_DRAW()
-{
-	if (osd_tex)
+	if (gl.index_type == GL_UNSIGNED_SHORT)
 	{
-		float u=0;
-		float v=0;
-
-		for (int i=0;i<13;i++)
-		{
-			//umin,vmin,umax,vmax
-			vjoy_pos[i][4]=(u+1)/OSD_TEX_W;
-			vjoy_pos[i][5]=(v+1)/OSD_TEX_H;
-		
-			vjoy_pos[i][6]=((u+vjoy_sz[0][i]-1))/OSD_TEX_W;
-			vjoy_pos[i][7]=((v+vjoy_sz[1][i]-1))/OSD_TEX_H;
-
-			u+=vjoy_sz[0][i];
-			if (u>=OSD_TEX_W)
-			{
-				u-=OSD_TEX_W;
-				v+=vjoy_sz[1][i];
-			}
-			//v+=vjoy_pos[i][3];
-		}
-
-		verify(glIsProgram(gl.OSD_SHADER.program));
-
-		glBindTexture(GL_TEXTURE_2D,osd_tex);
-		glUseProgram(gl.OSD_SHADER.program);
-
-		//reset rendering scale
-
-		float dc_width=640;
-		float dc_height=480;
-
-		float dc2s_scale_h=screen_height/480.0f;
-		float ds2s_offs_x=(screen_width-dc2s_scale_h*640)/2;
-
-		//-1 -> too much to left
-		ShaderUniforms.scale_coefs[0]=2.0f/(screen_width/dc2s_scale_h);
-		ShaderUniforms.scale_coefs[1]=-2/dc_height;
-		ShaderUniforms.scale_coefs[2]=1-2*ds2s_offs_x/(screen_width);
-		ShaderUniforms.scale_coefs[3]=-1;
-		
-		glUniform4fv( gl.OSD_SHADER.scale, 1, ShaderUniforms.scale_coefs);
-
-
-		glEnable(GL_BLEND);
-		glDisable(GL_DEPTH_TEST);
-		glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-
-		glDepthMask(false);
-		glDepthFunc(GL_ALWAYS);
-
-		glDisable(GL_CULL_FACE);
-		glDisable(GL_SCISSOR_TEST);
-
-		int dfa=osd_count/4;
-
-		for (int i=0;i<dfa;i++)
-			glDrawArrays(GL_TRIANGLE_STRIP,osd_base+i*4,4);
+		static std::vector<u16> short_idx;
+		short_idx.clear();
+		short_idx.reserve(gl.rendContext->idx.size());
+		for (u32 i : gl.rendContext->idx)
+			short_idx.push_back(i);
+		gl.vbo.idxs->update(short_idx.data(), short_idx.size() * sizeof(u16));
 	}
+	else
+		gl.vbo.idxs->update(gl.rendContext->idx.data(), gl.rendContext->idx.size() * sizeof(decltype(*gl.rendContext->idx.data())));
+	glCheck();
 }
 
-bool RenderFrame()
+bool OpenGLRenderer::renderFrame(int width, int height)
 {
-	bool is_rtt=pvrrc.isRTT;//(FB_W_SOF1& 0x1000000)!=0;
-
-	//disable RTTs for now ..
-	if (is_rtt)
-		return false;
-
-	_pvrrc->rend_inuse.Lock();
-	_pvrrc->MarkRend();
-
-	if (!ta_parse_vdrc(_pvrrc))
-		return false;
-
-	OSD_HOOK();
-
-	//if (FrameCount&7) return;
-
-	//Setup the matrix
+	if (!config::EmulateFramebuffer)
+		initVideoRoutingFrameBuffer();
 	
-	//TODO: Make this dynamic
-	float vtx_min_fZ=0.f;	//pvrrc.fZ_min;
-	float vtx_max_fZ=pvrrc.fZ_max;
+	bool is_rtt = gl.rendContext->isRTT;
+
+	float vtx_max_fZ = gl.rendContext->fZ_max;
 
 	//sanitise the values, now with NaN detection (for omap)
 	//0x49800000 is 1024*1024. Using integer math to avoid issues w/ infs and nans
-	if ((s32&)vtx_max_fZ<0 || (u32&)vtx_max_fZ>0x49800000)
-		vtx_max_fZ=10*1024;
-
+	if ((s32&)vtx_max_fZ < 0 || (u32&)vtx_max_fZ > 0x49800000)
+		vtx_max_fZ = 10 * 1024;
 
 	//add some extra range to avoid clipping border cases
-	vtx_min_fZ*=0.98f;
-	vtx_max_fZ*=1.001f;
+	vtx_max_fZ *= 1.001f;
 
-	//calculate a projection so that it matches the pvr x,y setup, and
-	//a) Z is linearly scaled between 0 ... 1
-	//b) W is passed though for proper perspective calculations
+	gl.matrices.CalcMatrices(gl.rendContext, width, height);
+	ShaderUniforms.ndcMat = gl.matrices.GetNormalMatrix();
 
-	/*
-	PowerVR coords:
-	fx, fy (pixel coordinates)
-	fz=1/w
+	ShaderUniforms.depth_coefs[0] = 2.f / vtx_max_fZ;
+	ShaderUniforms.depth_coefs[1] = -1.f;
+	ShaderUniforms.depth_coefs[2] = 0;
+	ShaderUniforms.depth_coefs[3] = 0;
 
-	(as a note, fx=x*fz;fy=y*fz)
-
-	Clip space
-	-Wc .. Wc, xyz
-	x: left-right, y: bottom-top
-	NDC space
-	-1 .. 1, xyz
-	Window space:
-	translated NDC (viewport, glDepth)
-
-	Attributes: 
-	//this needs to be cleared up, been some time since I wrote my rasteriser and i'm starting
-	//to forget/mixup stuff
-	vaX         -> VS output
-	iaX=vaX*W   -> value to be interpolated
-	iaX',W'     -> interpolated values
-	paX=iaX'/W' -> Per pixel interpolated value for attribute
-
-
-	Proper mappings:
-	Output from shader:
-	W=1/fz
-	x=fx*W -> maps to fx after perspective divide
-	y=fy*W ->         fy   -//-
-	z=-W for min, W for max. Needs to be linear.
-
-
-
-	umodified W, perfect mapping:
-	Z mapping:
-	pz=z/W
-	pz=z/(1/fz)
-	pz=z*fz
-	z=zt_s+zt_o
-	pz=(zt_s+zt_o)*fz
-	pz=zt_s*fz+zt_o*fz
-	zt_s=scale
-	zt_s=2/(max_fz-min_fz)
-	zt_o*fz=-min_fz-1
-	zt_o=(-min_fz-1)/fz == (-min_fz-1)*W
-
-
-	x=fx/(fx_range/2)-1		//0 to max -> -1 to 1 
-	y=fy/(-fy_range/2)+1	//0 to max -> 1 to -1
-	z=-min_fz*W + (zt_s-1)  //0 to +inf -> -1 to 1
-
-	o=a*z+c
-	1=a*z_max+c
-	-1=a*z_min+c
-
-	c=-a*z_min-1
-	1=a*z_max-a*z_min-1
-	2=a*(z_max-z_min)
-	a=2/(z_max-z_min)
-	*/
-
-	//float B=2/(min_invW-max_invW);
-	//float A=-B*max_invW+vnear;
-
-	//these should be adjusted based on the current PVR scaling etc params
-	float dc_width=640;
-	float dc_height=480;
-
-	if (!is_rtt)
-	{
-		gcflip=0;
-		dc_width=640;
-		dc_height=480;
-	}
-	else
-	{
-		gcflip=1;
-
-		//For some reason this produces wrong results
-		//so for now its hacked based like on the d3d code
-		/*
-		dc_width=FB_X_CLIP.max-FB_X_CLIP.min+1;
-		dc_height=FB_Y_CLIP.max-FB_Y_CLIP.min+1;
-		u32 pvr_stride=(FB_W_LINESTRIDE.stride)*8;
-		*/
-
-		dc_width=640;
-		dc_height=480;
-	}
-
-	float scale_x=1, scale_y=1;
-
-	if (!is_rtt)
-	{
-		scale_x=fb_scale_x;
-		scale_y=fb_scale_y;
-
-		//work out scaling parameters !
-		if (VO_CONTROL.pixel_double)
-			scale_x*=0.5;
-	}
-	
-	if (SCALER_CTL.hscale)
-	{
-		scale_x*=2;
-	}
-
-	dc_width  *= scale_x;
-	dc_height *= scale_y;
-
-	glUseProgram(gl.modvol_shader.program);
-
-	/*
-
-	float vnear=0;
-	float vfar =1;
-
-	float max_invW=1/vtx_min_fZ;
-	float min_invW=1/vtx_max_fZ;
-
-	float B=vfar/(min_invW-max_invW);
-	float A=-B*max_invW+vnear;
-
-
-	GLfloat dmatrix[16] =
-	{
-		(2.f/dc_width)  ,0                ,-(640/dc_width)              ,0  ,
-		0               ,-(2.f/dc_height) ,(480/dc_height)              ,0  ,
-		0               ,0                ,A                            ,B  ,
-		0               ,0                ,1                            ,0
-	};
-
-	glUniformMatrix4fv(gl.matrix, 1, GL_FALSE, dmatrix);
-
-	*/
-
-	/*
-		Handle Dc to screen scaling
-	*/
-	float dc2s_scale_h=screen_height/480.0f;
-	float ds2s_offs_x=(screen_width-dc2s_scale_h*640)/2;
-
-	//-1 -> too much to left
-	ShaderUniforms.scale_coefs[0]=2.0f/(screen_width/dc2s_scale_h);
-	ShaderUniforms.scale_coefs[1]=(is_rtt?2:-2)/dc_height;
-	ShaderUniforms.scale_coefs[2]=1-2*ds2s_offs_x/(screen_width);
-	ShaderUniforms.scale_coefs[3]=is_rtt?1:-1;
-
-
-	ShaderUniforms.depth_coefs[0]=2/(vtx_max_fZ-vtx_min_fZ);
-	ShaderUniforms.depth_coefs[1]=-vtx_min_fZ-1;
-	ShaderUniforms.depth_coefs[2]=0;
-	ShaderUniforms.depth_coefs[3]=0;
-
-	//printf("scale: %f, %f, %f, %f\n",scale_coefs[0],scale_coefs[1],scale_coefs[2],scale_coefs[3]);
-
-	
 	//VERT and RAM fog color constants
-	u8* fog_colvert_bgra=(u8*)&FOG_COL_VERT;
-	u8* fog_colram_bgra=(u8*)&FOG_COL_RAM;
-	ShaderUniforms.ps_FOG_COL_VERT[0]=fog_colvert_bgra[2]/255.0f;
-	ShaderUniforms.ps_FOG_COL_VERT[1]=fog_colvert_bgra[1]/255.0f;
-	ShaderUniforms.ps_FOG_COL_VERT[2]=fog_colvert_bgra[0]/255.0f;
-
-	ShaderUniforms.ps_FOG_COL_RAM[0]=fog_colram_bgra [2]/255.0f;
-	ShaderUniforms.ps_FOG_COL_RAM[1]=fog_colram_bgra [1]/255.0f;
-	ShaderUniforms.ps_FOG_COL_RAM[2]=fog_colram_bgra [0]/255.0f;
+	FOG_COL_VERT.getRGBColor(ShaderUniforms.ps_FOG_COL_VERT);
+	FOG_COL_RAM.getRGBColor(ShaderUniforms.ps_FOG_COL_RAM);
 
 	//Fog density constant
-	u8* fog_density=(u8*)&FOG_DENSITY;
-	float fog_den_mant=fog_density[1]/128.0f;  //bit 7 -> x. bit, so [6:0] -> fraction -> /128
-	s32 fog_den_exp=(s8)fog_density[0];
-	ShaderUniforms.fog_den_float=fog_den_mant*powf(2.0f,fog_den_exp);
+	ShaderUniforms.fog_den_float = FOG_DENSITY.get() * config::ExtraDepthScale;
 
-
-	if (fog_needs_update)
+	gl.rendContext->fog_clamp_min.getRGBAColor(ShaderUniforms.fog_clamp_min);
+	gl.rendContext->fog_clamp_max.getRGBAColor(ShaderUniforms.fog_clamp_max);
+	
+	if (config::ModifierVolumes)
 	{
-		fog_needs_update=false;
-		//Get the coefs for the fog curve
-		u8* fog_table=(u8*)FOG_TABLE;
-		float xvals[128];
-		float yvals[128];
-		for (int i=0;i<128;i++)
-		{
-			xvals[i]=powf(2.0f,i>>4)*(1+(i&15)/16.f);
-			yvals[i]=fog_table[i*4+1]/255.0f;
-		}
+		create_modvol_shader();
+		glcache.UseProgram(gl.modvol_shader.program);
+		if (gl.modvol_shader.depth_scale != -1)
+			glUniform4fv(gl.modvol_shader.depth_scale, 1, ShaderUniforms.depth_coefs);
+		glUniformMatrix4fv(gl.modvol_shader.ndcMat, 1, GL_FALSE, &ShaderUniforms.ndcMat[0][0]);
+		glUniform1f(gl.modvol_shader.sp_ShaderColor, 1 - FPU_SHAD_SCALE.scale_factor / 256.f);
 
-		tryfit(xvals,yvals);
+		glcache.UseProgram(gl.n2ModVolShader.program);
+		if (gl.n2ModVolShader.depth_scale != -1)
+			glUniform4fv(gl.n2ModVolShader.depth_scale, 1, ShaderUniforms.depth_coefs);
+		glUniformMatrix4fv(gl.n2ModVolShader.ndcMat, 1, GL_FALSE, &ShaderUniforms.ndcMat[0][0]);
+		glUniform1f(gl.n2ModVolShader.sp_ShaderColor, 1 - FPU_SHAD_SCALE.scale_factor / 256.f);
 	}
-
-	glUseProgram(gl.modvol_shader.program);
-
-	glUniform4fv( gl.modvol_shader.scale, 1, ShaderUniforms.scale_coefs);
-	glUniform4fv( gl.modvol_shader.depth_scale, 1, ShaderUniforms.depth_coefs);
-
-
-	GLfloat td[4]={0.5,0,0,0};
-
-	glUseProgram(gl.OSD_SHADER.program);
-	glUniform4fv( gl.OSD_SHADER.scale, 1, ShaderUniforms.scale_coefs);
-	glUniform4fv( gl.OSD_SHADER.depth_scale, 1, td);
 
 	ShaderUniforms.PT_ALPHA=(PT_ALPHA_REF&0xFF)/255.0f;
 
-	for (u32 i=0;i<sizeof(gl.pogram_table)/sizeof(gl.pogram_table[0]);i++)
+	if (config::EmulateFramebuffer && gl.rendContext->fb_W_CTRL.fb_dither && gl.rendContext->fb_W_CTRL.fb_packmode <= 3)
 	{
-		PipelineShader* s=&gl.pogram_table[i];
-		if (s->program == -1)
-			continue;
-
-		glUseProgram(s->program);
-
-		ShaderUniforms.Set(s);
+		ShaderUniforms.dithering = true;
+		switch (gl.rendContext->fb_W_CTRL.fb_packmode)
+		{
+		case 0: // 0555 KRGB 16 bit
+		case 3: // 1555 ARGB 16 bit
+			ShaderUniforms.ditherDivisor[0] = ShaderUniforms.ditherDivisor[1] = ShaderUniforms.ditherDivisor[2] = 2.f;
+			break;
+		case 1: // 565 RGB 16 bit
+			ShaderUniforms.ditherDivisor[0] = ShaderUniforms.ditherDivisor[2] = 2.f;
+			ShaderUniforms.ditherDivisor[1] = 4.f;
+			break;
+		case 2: // 4444 ARGB 16 bit
+			ShaderUniforms.ditherDivisor[0] = ShaderUniforms.ditherDivisor[1] = ShaderUniforms.ditherDivisor[2] = 1.f;
+			break;
+		default:
+			break;
+		}
+		ShaderUniforms.ditherDivisor[3] = 1.f;
 	}
+	else
+	{
+		ShaderUniforms.dithering = false;
+	}
+
+	for (auto& it : gl.shaders)
+	{
+		glcache.UseProgram(it.second.program);
+		ShaderUniforms.Set(&it.second);
+		resetN2UniformCache(&it.second);
+	}
+#ifndef GLES2
+	if (gl.prim_restart_fixed_supported)
+		glEnable(GL_PRIMITIVE_RESTART_FIXED_INDEX);
+#ifndef GLES
+	else if (gl.prim_restart_supported) {
+		glEnable(GL_PRIMITIVE_RESTART);
+		glPrimitiveRestartIndex(-1);
+	}
+#endif
+#endif
 	//setup render target first
 	if (is_rtt)
 	{
-		GLuint channels,format;
-		switch(FB_W_CTRL.fb_packmode)
+		if (BindRTT() == 0)
+			return false;
+	}
+	else
+	{
+		this->width = width;
+		this->height = height;
+		getVideoShift(gl.ofbo.shiftX, gl.ofbo.shiftY);
+#ifdef LIBRETRO
+		if (config::EmulateFramebuffer)
 		{
-		case 0: //0x0   0555 KRGB 16 bit  (default)	Bit 15 is the value of fb_kval[7].
-			channels=GL_RGBA;
-			format=GL_UNSIGNED_SHORT_5_5_5_1;
-			break;
-			
-		case 1: //0x1   565 RGB 16 bit	
-			channels=GL_RGB;
-			format=GL_UNSIGNED_SHORT_5_6_5;
-			break;
-			
-		case 2: //0x2   4444 ARGB 16 bit
-			channels=GL_RGBA;
-			format=GL_UNSIGNED_SHORT_5_5_5_1;
-			break;
-			
-		case 3://0x3    1555 ARGB 16 bit    The alpha value is determined by comparison with the value of fb_alpha_threshold.
-			channels=GL_RGBA;
-			format=GL_UNSIGNED_SHORT_5_5_5_1;
-			break;
-
-		case 4: //0x4   888 RGB 24 bit packed
-			channels=GL_RGB;
-			format=GL_UNSIGNED_SHORT_5_6_5;
-			break;
-			
-		case 5: //0x5   0888 KRGB 32 bit    K is the value of fk_kval.
-			channels=GL_RGBA;
-			format=GL_UNSIGNED_SHORT_4_4_4_4;
-			break;
-			
-		case 6: //0x6   8888 ARGB 32 bit
-			channels=GL_RGBA;
-			format=GL_UNSIGNED_SHORT_4_4_4_4;
-			break;
-
-		case 7: //7     invalid
-			die("7 is not valid");
-			break;
+			if (init_output_framebuffer(width, height) == 0)
+				return false;
 		}
-		BindRTT(FB_W_SOF1&VRAM_MASK,FB_X_CLIP.max-FB_X_CLIP.min+1,FB_Y_CLIP.max-FB_Y_CLIP.min+1,channels,format);
+		else
+		{
+			glBindFramebuffer(GL_FRAMEBUFFER, postProcessor.getFramebuffer(width, height));
+			glViewport(0, 0, width, height);
+		}
+#else
+		if (init_output_framebuffer(width, height) == 0)
+			return false;
+#endif
 	}
+
+	//Color is cleared by the background plane
+
+	glcache.Disable(GL_SCISSOR_TEST);
+
+	glcache.DepthMask(GL_TRUE);
+	glClearDepthf(0.0);
+	glStencilMask(0xFF); glCheck();
+    glClearStencil(0);
+	glClear(GL_STENCIL_BUFFER_BIT | GL_DEPTH_BUFFER_BIT); glCheck();
+	if (!is_rtt)
+		glcache.ClearColor(VO_BORDER_COL.red(), VO_BORDER_COL.green(), VO_BORDER_COL.blue(), 1.f);
 	else
-	{
-		glBindFramebuffer(GL_FRAMEBUFFER,0);
-	}
-	if (KillTex)
-	{
-		void killtex();
-		killtex();
-		printf("Texture cache cleared\n");
-	}
-	
-	//Clear depth
-	//Color is cleared by the bgp
-	if (settings.rend.WideScreen)
-		glClearColor(pvrrc.verts.head()->col[2]/255.0f,pvrrc.verts.head()->col[1]/255.0f,pvrrc.verts.head()->col[0]/255.0f,1.0f);
-	else
-		glClearColor(0,0,0,1.0f);
+		glcache.ClearColor(0.f, 0.f, 0.f, 0.f);
 
-	glClearDepthf(0.f); glCheck();
-	glClear(GL_COLOR_BUFFER_BIT|GL_STENCIL_BUFFER_BIT|GL_DEPTH_BUFFER_BIT); glCheck();
-
-
-	if (UsingAutoSort())
-		GenSorted();
-
+	if (is_rtt || gl.rendContext->clearFramebuffer)
+		glClear(GL_COLOR_BUFFER_BIT);
 	//move vertex to gpu
-
 	//Main VBO
-	glBindBuffer(GL_ARRAY_BUFFER, gl.vbo.geometry); glCheck();
-	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, gl.vbo.idxs); glCheck();
+	gl.vbo.geometry->update(&gl.rendContext->verts[0], gl.rendContext->verts.size() * sizeof(decltype(gl.rendContext->verts[0])));
 
-	glBufferData(GL_ARRAY_BUFFER,pvrrc.verts.bytes(),pvrrc.verts.head(),GL_STREAM_DRAW); glCheck();
-
-	glBufferData(GL_ELEMENT_ARRAY_BUFFER,pvrrc.idx.bytes(),pvrrc.idx.head(),GL_STREAM_DRAW);
+	upload_vertex_indices();
 
 	//Modvol VBO
-	if (pvrrc.modtrig.used())
-	{
-		glBindBuffer(GL_ARRAY_BUFFER, gl.vbo.modvols); glCheck();
-		glBufferData(GL_ARRAY_BUFFER,pvrrc.modtrig.bytes(),pvrrc.modtrig.head(),GL_STREAM_DRAW); glCheck();
-	}
+	if (!gl.rendContext->modtrig.empty())
+		gl.vbo.modvols->update(&gl.rendContext->modtrig[0], gl.rendContext->modtrig.size() * sizeof(decltype(gl.rendContext->modtrig[0])));
 
-	palette_update();
-
-	int offs_x=ds2s_offs_x+0.5f;
-	//this needs to be scaled
-	glScissor(offs_x+pvrrc.fb_X_CLIP.min/scale_x,(pvrrc.fb_Y_CLIP.min/scale_y)*dc2s_scale_h,(pvrrc.fb_X_CLIP.max-pvrrc.fb_X_CLIP.min+1)/scale_x*dc2s_scale_h,(pvrrc.fb_Y_CLIP.max-pvrrc.fb_Y_CLIP.min+1)/scale_y*dc2s_scale_h);
-	if (settings.rend.WideScreen && pvrrc.fb_X_CLIP.min==0 && ((pvrrc.fb_X_CLIP.max+1)/scale_x==640) && (pvrrc.fb_Y_CLIP.min==0) && ((pvrrc.fb_Y_CLIP.max+1)/scale_y==480 ) )
-	{
-		glDisable(GL_SCISSOR_TEST);
+	Rect scissor = gl.matrices.getBaseScissor();
+	ShaderUniforms.base_clipping.x = scissor.origin.x;
+	ShaderUniforms.base_clipping.y = scissor.origin.y;
+	ShaderUniforms.base_clipping.width = scissor.size.x;
+	ShaderUniforms.base_clipping.height = scissor.size.y;
+	if (is_rtt) {
+		// Render to texture
+		ShaderUniforms.base_clipping.enabled = true;
 	}
 	else
-		glEnable(GL_SCISSOR_TEST);
+	{
+		// Render to screen
+		if (scissor.origin.x != 0 || scissor.origin.y != 0
+				|| scissor.size.x < (int)gl.rendContext->framebufferWidth
+				|| scissor.size.y < (int)gl.rendContext->framebufferHeight)
+			ShaderUniforms.base_clipping.enabled = true;
+		else
+			ShaderUniforms.base_clipping.enabled = false;
+	}
+	if (ShaderUniforms.base_clipping.enabled) {
+		glcache.Scissor(ShaderUniforms.base_clipping.x, ShaderUniforms.base_clipping.y,
+				ShaderUniforms.base_clipping.width, ShaderUniforms.base_clipping.height);
+		glcache.Enable(GL_SCISSOR_TEST);
+	}
 
 	DrawStrips();
+#ifdef LIBRETRO
+	if (!is_rtt && !config::EmulateFramebuffer)
+		postProcessor.render(glsm_get_current_framebuffer());
+#endif
 
-	#if HOST_OS==OS_WINDOWS
-		//Sleep(40); //to test MT stability
-	#endif
-
-	eglCheck();
-
-	KillTex=false;
+	if (is_rtt)
+		ReadRTTBuffer();
+	else if (config::EmulateFramebuffer)
+		writeFramebufferToVRAM();
+	else {
+		gl.ofbo.aspectRatio = getOutputFramebufferAspectRatio();
+#ifndef LIBRETRO
+		gl.ofbo2.ready = false;
+		renderLastFrame();
+#endif
+	}
+	GlVertexArray::unbind();
 
 	return !is_rtt;
 }
 
-#if !defined(_ANDROID) && !defined(TARGET_NACL32)
-#if HOST_OS==OS_LINUX
-#define SET_AFNT 1
+void OpenGLRenderer::initVideoRoutingFrameBuffer()
+{
+#ifdef VIDEO_ROUTING
+	if (config::VideoRouting)
+	{
+		int targetWidth = (config::VideoRoutingScale ? config::VideoRoutingVRes * settings.display.width / settings.display.height : settings.display.width);
+		int targetHeight = (config::VideoRoutingScale ? config::VideoRoutingVRes : settings.display.height);
+		if (gl.videorouting.framebuffer != nullptr
+			&& (gl.videorouting.framebuffer->getWidth() != targetWidth || gl.videorouting.framebuffer->getHeight() != targetHeight))
+			gl.videorouting.framebuffer.reset();
+		if (gl.videorouting.framebuffer == nullptr)
+			gl.videorouting.framebuffer = std::make_unique<GlFramebuffer>(targetWidth, targetHeight, true, true);
+	}
 #endif
+}
+
+void OpenGLRenderer::Term()
+{
+	TexCache.Clear();
+	gles_term();
+}
+
+bool OpenGLRenderer::Render()
+{
+	saveCurrentFramebuffer();
+	renderFrame(gl.rendContext->framebufferWidth, gl.rendContext->framebufferHeight);
+	if (gl.rendContext->isRTT) {
+		restoreCurrentFramebuffer();
+		return false;
+	}
+
+	if (!config::EmulateFramebuffer)
+	{
+		frameRendered = true;
+		clearLastFrame = false;
+		drawOSD();
+		renderVideoRouting();
+	}
+	restoreCurrentFramebuffer();
+
+	return true;
+}
+
+void OpenGLRenderer::renderVideoRouting()
+{
+#ifdef VIDEO_ROUTING
+	if (config::VideoRouting)
+	{
+		glBindFramebuffer(GL_READ_FRAMEBUFFER, gl.ofbo.origFbo);
+		gl.videorouting.framebuffer->bind(GL_DRAW_FRAMEBUFFER);
+		glcache.Disable(GL_SCISSOR_TEST);
+		int targetWidth = (config::VideoRoutingScale ? config::VideoRoutingVRes * settings.display.width / settings.display.height : settings.display.width);
+		int targetHeight = (config::VideoRoutingScale ? config::VideoRoutingVRes : settings.display.height);
+		glBlitFramebuffer(0, 0, settings.display.width, settings.display.height,
+						  0, 0, targetWidth, targetHeight,
+						  GL_COLOR_BUFFER_BIT, GL_LINEAR);
+		extern void os_VideoRoutingPublishFrameTexture(GLuint texID, GLuint texTarget, float w, float h);
+		os_VideoRoutingPublishFrameTexture(gl.videorouting.framebuffer->getTexture(), GL_TEXTURE_2D, targetWidth, targetHeight);
+	}
+	else
+	{
+		os_VideoRoutingTermGL();
+	}
 #endif
-
-extern u16 kcode[4];
-
-/*
-bool rend_single_frame()
-{
-	//wait render start only if no frame pending
-	_pvrrc = DequeueRender();
-
-	while (!_pvrrc)
-	{
-		rs.Wait();
-		_pvrrc = DequeueRender();
-	}
-
-	bool do_swp=false;
-	//if (kcode[0]&(1<<9))
-	{
-		
-
-	//clear up & free data ..
-	tactx_Recycle(_pvrrc);
-	_pvrrc=0;
-
-	return do_swp;
-}
-*/
-
-
-void rend_set_fb_scale(float x,float y)
-{
-	fb_scale_x=x;
-	fb_scale_y=y;
 }
 
-struct glesrend : Renderer
+Renderer* rend_GLES2()
 {
-	bool Init() { return gles_init(); }
-	void Resize(int w, int h) { }
-	void Term() { } 
-
-	bool Render() 
-	{ 
-		bool do_swp=RenderFrame();
-
-		if (do_swp)
-		{
-			OSD_DRAW();
-		}
-
-		return do_swp;
-	}
-
-	void Present() { gl_swap(); }
-};
-
-
-#include "deps/libpng/png.h"
-
-FILE* pngfile;
-
-void png_cstd_read(png_structp png_ptr, png_bytep data, png_size_t length)
-{
-	fread(data,1, length,pngfile);
+	return new OpenGLRenderer();
 }
-
-GLuint loadPNG(const string& fname, int &width, int &height)
-{
-	const char* filename=fname.c_str();
-	FILE* file = fopen(filename, "rb");
-	pngfile=file;
-
-	if (!file)
-	{
-		printf("Error opening %s", filename);
-		return TEXTURE_LOAD_ERROR;
-	}
-
-	//header for testing if it is a png
-	png_byte header[8];
-
-	//read the header
-	fread(header,1,8,file);
-
-	//test if png
-	int is_png = !png_sig_cmp(header, 0, 8);
-	if (!is_png)
-	{
-		fclose(file);
-		printf("Not a PNG file : %s", filename);
-		return TEXTURE_LOAD_ERROR;
-	}
-
-	//create png struct
-	png_structp png_ptr = png_create_read_struct(PNG_LIBPNG_VER_STRING, NULL,
-		NULL, NULL);
-	if (!png_ptr)
-	{
-		fclose(file);
-		printf("Unable to create PNG struct : %s", filename);
-		return (TEXTURE_LOAD_ERROR);
-	}
-
-	//create png info struct
-	png_infop info_ptr = png_create_info_struct(png_ptr);
-	if (!info_ptr)
-	{
-		png_destroy_read_struct(&png_ptr, (png_infopp) NULL, (png_infopp) NULL);
-		printf("Unable to create PNG info : %s", filename);
-		fclose(file);
-		return (TEXTURE_LOAD_ERROR);
-	}
-
-	//create png info struct
-	png_infop end_info = png_create_info_struct(png_ptr);
-	if (!end_info)
-	{
-		png_destroy_read_struct(&png_ptr, &info_ptr, (png_infopp) NULL);
-		printf("Unable to create PNG end info : %s", filename);
-		fclose(file);
-		return (TEXTURE_LOAD_ERROR);
-	}
-
-	//png error stuff, not sure libpng man suggests this.
-	if (setjmp(png_jmpbuf(png_ptr)))
-	{
-		fclose(file);
-		printf("Error during setjmp : %s", filename);
-		png_destroy_read_struct(&png_ptr, &info_ptr, &end_info);
-		return (TEXTURE_LOAD_ERROR);
-	}
-
-	//init png reading
-	//png_init_io(png_ptr, fp);
-	png_set_read_fn(png_ptr, NULL, png_cstd_read);
-
-	//let libpng know you already read the first 8 bytes
-	png_set_sig_bytes(png_ptr, 8);
-
-	// read all the info up to the image data
-	png_read_info(png_ptr, info_ptr);
-
-	//variables to pass to get info
-	int bit_depth, color_type;
-	png_uint_32 twidth, theight;
-
-	// get info about png
-	png_get_IHDR(png_ptr, info_ptr, &twidth, &theight, &bit_depth, &color_type,
-		NULL, NULL, NULL);
-
-	//update width and height based on png info
-	width = twidth;
-	height = theight;
-
-	// Update the png info struct.
-	png_read_update_info(png_ptr, info_ptr);
-
-	// Row size in bytes.
-	int rowbytes = png_get_rowbytes(png_ptr, info_ptr);
-
-	// Allocate the image_data as a big block, to be given to opengl
-	png_byte *image_data = new png_byte[rowbytes * height];
-	if (!image_data)
-	{
-		//clean up memory and close stuff
-		png_destroy_read_struct(&png_ptr, &info_ptr, &end_info);
-		printf("Unable to allocate image_data while loading %s ", filename);
-		fclose(file);
-		return TEXTURE_LOAD_ERROR;
-	}
-
-	//row_pointers is for pointing to image_data for reading the png with libpng
-	png_bytep *row_pointers = new png_bytep[height];
-	if (!row_pointers) 
-	{
-		//clean up memory and close stuff
-		png_destroy_read_struct(&png_ptr, &info_ptr, &end_info);
-		delete[] image_data;
-		printf("Unable to allocate row_pointer while loading %s ", filename);
-		fclose(file);
-		return TEXTURE_LOAD_ERROR;
-	}
-
-	// set the individual row_pointers to point at the correct offsets of image_data
-	for (int i = 0; i < height; ++i)
-		row_pointers[height - 1 - i] = image_data + i * rowbytes;
-
-	//read the png into image_data through row_pointers
-	png_read_image(png_ptr, row_pointers);
-
-	//Now generate the OpenGL texture object
-	GLuint texture;
-	glGenTextures(1, &texture);
-	glBindTexture(GL_TEXTURE_2D, texture);
-	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA,
-		GL_UNSIGNED_BYTE, (GLvoid*) image_data);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-
-	//clean up memory and close stuff
-	png_destroy_read_struct(&png_ptr, &info_ptr, &end_info);
-	delete[] image_data;
-	delete[] row_pointers;
-	fclose(file);
-
-	return texture;
-}
-
-
-Renderer* rend_GLES2() { return new glesrend(); }

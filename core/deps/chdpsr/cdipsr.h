@@ -1,7 +1,7 @@
 #ifndef __CDI_H__
 #define __CDI_H__
 
-
+#include "../../oslib/storage.h"
 
 /* Basic structures */
 
@@ -38,12 +38,11 @@ typedef struct track_s
 #define CDI_V3  0x80000005
 #define CDI_V35 0x80000006
 
-unsigned long ask_type(FILE *fsource, long header_position);
-void CDI_init (FILE *fsource, image_s *image, char *fsourcename);
-void CDI_get_sessions (FILE *fsource, image_s *image);
-void CDI_get_tracks (FILE *fsource, image_s *image);
-void CDI_read_track (FILE *fsource, image_s *image, track_s *track);
-void CDI_skip_next_session (FILE *fsource, image_s *image);
+unsigned long ask_type(hostfs::File *fsource, long header_position);
+bool CDI_init(hostfs::File *fsource, image_s *image, const char *fsourcename);
+bool CDI_get_sessions(hostfs::File *fsource, image_s *image);
+bool CDI_get_tracks(hostfs::File *fsource, image_s *image);
+bool CDI_read_track(hostfs::File *fsource, image_s *image, track_s *track);
+void CDI_skip_next_session(hostfs::File *fsource, image_s *image);
 
 #endif
-

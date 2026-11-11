@@ -1,7 +1,7 @@
 #include "ta.h"
 #include "ta_ctx.h"
-
-extern u32 ta_type_lut[256];
+#include "hw/holly/holly_intc.h"
+#include "pvr_mem.h"
 
 /*
 	Threaded TA Implementation
@@ -11,14 +11,23 @@ extern u32 ta_type_lut[256];
 	Render/TA thread -> ta data -> draw lists -> draw
 */
 
-#if HOST_OS==OS_WINDOWS
-extern u32 SQW,DMAW;
-#define SQWC(x) (SQW+=x)
-#define DMAWC(x) (DMAW+=x)
+#if HOST_CPU == CPU_X86
+#include <xmmintrin.h>
+struct simd256_t
+{
+	alignas(32) __m128 data[2];
+};
+#elif HOST_CPU == CPU_ARM && defined(__ARM_NEON__)
+#include <arm_neon.h>
+struct simd256_t
+{
+	alignas(32) uint64x2_t data[2];
+};
 #else
-#define SQWC(x)
-#define DMAWC(x)
-
+struct simd256_t
+{
+	alignas(32) u64 data[4];
+};
 #endif
 
 /*
@@ -63,8 +72,9 @@ enum ta_state
 u8 ta_fsm[2049];	//[2048] stores the current state
 u32 ta_fsm_cl=7;
 
+u32 taRenderPass;
 
-void fill_fsm(ta_state st, s8 pt, s8 obj, ta_state next, u32 proc=0, u32 sz64=0)
+static void fill_fsm(ta_state st, s8 pt, s8 obj, ta_state next, u32 proc=0, u32 sz64=0)
 {
 	for (int i=0;i<8;i++)
 	{
@@ -82,7 +92,7 @@ void fill_fsm(ta_state st, s8 pt, s8 obj, ta_state next, u32 proc=0, u32 sz64=0)
 	}
 }
 
-void fill_fsm()
+static void fill_fsm()
 {
 	//initialise to invalid
 	for (int i=0;i<2048;i++)
@@ -125,7 +135,7 @@ void fill_fsm()
 
 				for (int k=0;k<32;k++)
 				{
-					u32 uid=ta_type_lut[k*4];
+					u32 uid = TaTypeLut::instance().table[k * 4];
 					u32 vt=uid & 0x7f;
 
 					bool v64 = vt == 5 || vt == 6 || vt == 11 || vt == 12 || vt == 13 || vt == 14;
@@ -185,7 +195,7 @@ void fill_fsm()
 	fill_fsm(TAS_MLV64_H,-1,-1,TAS_MLV64); //64 MH -> expect M64
 }
 
-const HollyInterruptID ListEndInterrupt[5]=
+static const HollyInterruptID ListEndInterrupt[5]=
 {
 	holly_OPAQUE,
 	holly_OPAQUEMOD,
@@ -195,7 +205,7 @@ const HollyInterruptID ListEndInterrupt[5]=
 };
 
 
-NOINLINE void DYNACALL ta_handle_cmd(u32 trans)
+static void DYNACALL ta_handle_cmd(u32 trans)
 {
 	Ta_Dma* dat=(Ta_Dma*)(ta_tad.thd_data-32);
 
@@ -215,11 +225,10 @@ NOINLINE void DYNACALL ta_handle_cmd(u32 trans)
 				ta_fsm_cl=dat->pcw.ListType;
 			//printf("List %d ended\n",ta_fsm_cl);
 
-			if (ta_fsm_cl==ListType_Translucent)
-			{
-				//ta_tad.early=os_GetSeconds();
-			}
-			asic_RaiseInterrupt( ListEndInterrupt[ta_fsm_cl]);
+			if (settings.platform.isNaomi2())
+				asic_RaiseInterruptBothCLX(ListEndInterrupt[ta_fsm_cl]);
+			else
+				asic_RaiseInterrupt(ListEndInterrupt[ta_fsm_cl]);
 			ta_fsm_cl=7;
 			trans=TAS_NS;
 		}
@@ -239,7 +248,7 @@ NOINLINE void DYNACALL ta_handle_cmd(u32 trans)
 			if (ta_fsm_cl==7)
 				ta_fsm_cl=dat->pcw.ListType;
 
-			verify(!IsModVolList(ta_fsm_cl));
+			//verify(!IsModVolList(ta_fsm_cl));	// fails with "F1 World Grand Prix for Dreamcast" and only with dynarec...
 			trans=TAS_PLV32;
 		}
 		else
@@ -255,87 +264,332 @@ NOINLINE void DYNACALL ta_handle_cmd(u32 trans)
 
 static OnLoad ol_fillfsm(&fill_fsm);
 
-void ta_vtx_ListCont()
-{
-	SetCurrentTARC(TA_ISP_BASE);
+/*
+Volume,Col_Type,Texture,Offset,Gouraud,16bit_UV
 
-	ta_cur_state=TAS_NS;
-}
-void ta_vtx_ListInit()
-{
-	SetCurrentTARC(TA_ISP_BASE);
-	ta_tad.Clear();
+0   0   0   (0) x   invalid Polygon Type 0  Polygon Type 0
+0   0   1   x   x   0       Polygon Type 0  Polygon Type 3
+0   0   1   x   x   1       Polygon Type 0  Polygon Type 4
 
-	ta_cur_state=TAS_NS;
+0   1   0   (0) x   invalid Polygon Type 0  Polygon Type 1
+0   1   1   x   x   0       Polygon Type 0  Polygon Type 5
+0   1   1   x   x   1       Polygon Type 0  Polygon Type 6
+
+0   2   0   (0) x   invalid Polygon Type 1  Polygon Type 2
+0   2   1   0   x   0       Polygon Type 1  Polygon Type 7
+0   2   1   0   x   1       Polygon Type 1  Polygon Type 8
+0   2   1   1   x   0       Polygon Type 2  Polygon Type 7
+0   2   1   1   x   1       Polygon Type 2  Polygon Type 8
+
+0   3   0   (0) x   invalid Polygon Type 0  Polygon Type 2
+0   3   1   x   x   0       Polygon Type 0  Polygon Type 7
+0   3   1   x   x   1       Polygon Type 0  Polygon Type 8
+
+1   0   0   (0) x   invalid Polygon Type 3  Polygon Type 9
+1   0   1   x   x   0       Polygon Type 3  Polygon Type 11
+1   0   1   x   x   1       Polygon Type 3  Polygon Type 12
+
+1   2   0   (0) x   invalid Polygon Type 4  Polygon Type 10
+1   2   1   x   x   0       Polygon Type 4  Polygon Type 13
+1   2   1   x   x   1       Polygon Type 4  Polygon Type 14
+
+1   3   0   (0) x   invalid Polygon Type 3  Polygon Type 10
+1   3   1   x   x   0       Polygon Type 3  Polygon Type 13
+1   3   1   x   x   1       Polygon Type 3  Polygon Type 14
+
+Sprites :
+(0) (0) 0 (0) (0) invalid Sprite  Sprite Type 0
+(0) (0) 1  x   (0) (1)     Sprite  Sprite Type 1
+
+*/
+//helpers 0-14
+u32 TaTypeLut::poly_data_type_id(PCW pcw)
+{
+	if (pcw.Texture)
+	{
+		//textured
+		if (pcw.Volume==0)
+		{	//single volume
+			if (pcw.Col_Type==0)
+			{
+				if (pcw.UV_16bit==0)
+					return 3;           //(Textured, Packed Color , 32b uv)
+				else
+					return 4;           //(Textured, Packed Color , 16b uv)
+			}
+			else if (pcw.Col_Type==1)
+			{
+				if (pcw.UV_16bit==0)
+					return 5;           //(Textured, Floating Color , 32b uv)
+				else
+					return 6;           //(Textured, Floating Color , 16b uv)
+			}
+			else
+			{
+				if (pcw.UV_16bit==0)
+					return 7;           //(Textured, Intensity , 32b uv)
+				else
+					return 8;           //(Textured, Intensity , 16b uv)
+			}
+		}
+		else
+		{
+			//two volumes
+			if (pcw.Col_Type==0)
+			{
+				if (pcw.UV_16bit==0)
+					return 11;          //(Textured, Packed Color, with Two Volumes)
+
+				else
+					return 12;          //(Textured, Packed Color, 16bit UV, with Two Volumes)
+
+			}
+			else if (pcw.Col_Type==1)
+			{
+				return TaTypeLut::INVALID_TYPE;
+			}
+			else
+			{
+				if (pcw.UV_16bit==0)
+					return 13;          //(Textured, Intensity, with Two Volumes)
+
+				else
+					return 14;          //(Textured, Intensity, 16bit UV, with Two Volumes)
+			}
+		}
+	}
+	else
+	{
+		//non textured
+		if (pcw.Volume==0)
+		{	//single volume
+			if (pcw.Col_Type==0)
+				return 0;               //(Non-Textured, Packed Color)
+			else if (pcw.Col_Type==1)
+				return 1;               //(Non-Textured, Floating Color)
+			else
+				return 2;               //(Non-Textured, Intensity)
+		}
+		else
+		{
+			//two volumes
+			if (pcw.Col_Type==0)
+				return 9;               //(Non-Textured, Packed Color, with Two Volumes)
+			else if (pcw.Col_Type==1)
+				return TaTypeLut::INVALID_TYPE;
+			else
+				return 10;              //(Non-Textured, Intensity, with Two Volumes)
+		}
+	}
 }
+//0-4 | 0x80
+u32 TaTypeLut::poly_header_type_size(PCW pcw)
+{
+	if (pcw.Volume == 0)
+	{
+		if ( pcw.Col_Type<2 ) //0,1
+		{
+			return 0  | 0;              //Polygon Type 0 -- SZ32
+		}
+		else if ( pcw.Col_Type == 2 )
+		{
+			if (pcw.Texture)
+			{
+				if (pcw.Offset)
+				{
+					return 2 | 0x80;    //Polygon Type 2 -- SZ64
+				}
+				else
+				{
+					return 1 | 0;       //Polygon Type 1 -- SZ32
+				}
+			}
+			else
+			{
+				return 1 | 0;           //Polygon Type 1 -- SZ32
+			}
+		}
+		else	//col_type ==3
+		{
+			return 0 | 0;               //Polygon Type 0 -- SZ32
+		}
+	}
+	else
+	{
+		if ( pcw.Col_Type==0 ) //0
+		{
+			return 3 | 0;              //Polygon Type 3 -- SZ32
+		}
+		else if ( pcw.Col_Type==2 ) //2
+		{
+			return 4 | 0x80;           //Polygon Type 4 -- SZ64
+		}
+		else if ( pcw.Col_Type==3 ) //3
+		{
+			return 3 | 0;              //Polygon Type 3 -- SZ32
+		}
+		else
+		{
+			return TaTypeLut::INVALID_TYPE;
+		}
+	}
+}
+
+TaTypeLut::TaTypeLut()
+{
+	for (int i = 0; i < 256; i++)
+	{
+		PCW pcw;
+		pcw.obj_ctrl = i;
+		u32 rv = poly_data_type_id(pcw);
+		u32 type = poly_header_type_size(pcw);
+
+		if (type & 0x80)
+			rv |= SZ64 << 30;
+		else
+			rv |= SZ32 << 30;
+
+		rv |= (type & 0x7F) << 8;
+
+		table[i] = rv;
+	}
+}
+
+static u32 opbSize(int n)
+{
+	return n == 0 ? 0 : 16 << n;
+}
+
+static void markObjectListBlocks(int renderPass)
+{
+	u32 addr;
+	u32 tile_size;
+	getRegionTileAddrAndSize(addr, tile_size);
+	addr += tile_size * renderPass;
+
+	// Read the opaque pointer of the first tile and check that it's non-null (Naomi doom)
+	u32 opbAddr = pvr_read32p<u32>(addr + 4);
+	bool emptyOpaqueList = (opbAddr & 0x80000000) != 0;
+
+	addr = TA_OL_BASE;
+	const int tileCount = (TA_GLOB_TILE_CLIP.tile_y_num + 1) * (TA_GLOB_TILE_CLIP.tile_x_num + 1);
+	// opaque
+	u32 opBlockSize = opbSize(TA_ALLOC_CTRL & 3);
+	if (emptyOpaqueList)
+		addr += opBlockSize * tileCount;
+	if (opBlockSize == 0 || emptyOpaqueList)
+	{
+		// skip modvols OPBs
+		addr += opbSize((TA_ALLOC_CTRL >> 4) & 3) * tileCount;
+		// transparent
+		opBlockSize = opbSize((TA_ALLOC_CTRL >> 8) & 3);
+		if (opBlockSize == 0)
+		{
+			// skip TR modvols OPBs
+			addr += opbSize((TA_ALLOC_CTRL >> 12) & 3) * tileCount;
+			// punch-through
+			opBlockSize = opbSize((TA_ALLOC_CTRL >> 16) & 3);
+			if (opBlockSize == 0) {
+				INFO_LOG(PVR, "markObjectListBlocks: all lists are empty");
+				return;
+			}
+		}
+	}
+	for (u32 y = 0; y <= TA_GLOB_TILE_CLIP.tile_y_num; y++)
+		for (u32 x = 0; x <= TA_GLOB_TILE_CLIP.tile_x_num; x++)
+		{
+			pvr_write32p(addr, TA_OL_BASE);
+			addr += opBlockSize;
+		}
+}
+
+void ta_vtx_ListInit(bool continuation)
+{
+	if (!continuation)
+		taRenderPass = 0;
+	else
+		taRenderPass++;
+	SetCurrentTARC(TA_OL_BASE);
+	ta_tad.ClearPartial();
+	markObjectListBlocks(taRenderPass);
+
+	ta_cur_state = TAS_NS;
+	ta_fsm_cl = 7;
+	if (settings.platform.isNaomi2())
+		ta_parse_reset();
+}
+
 void ta_vtx_SoftReset()
 {
-	ta_cur_state=TAS_NS;
+	ta_cur_state = TAS_NS;
 }
 
-
-INLINE
-void DYNACALL ta_thd_data32_i(void* data)
-{		
-	f64* dst=(f64*)ta_tad.thd_data;
-	f64* src=(f64*)data;
-
-	ta_tad.thd_data+=32;
-
-	f64 t = src[0];
-	dst[0]=t;
-	dst[1]=src[1];
-	dst[2]=src[2];
-	dst[3]=src[3];
-
-	PCW pcw=(PCW&)t;
-	u32 state_in = (ta_cur_state<<8) | (pcw.ParaType<<5) | (pcw.obj_ctrl>>2)%32;
-		
-	u8 trans = ta_fsm[state_in];
-	ta_cur_state =  (ta_state)trans;
-	bool must_handle=trans&0xF0;
-
-
-	if (unlikely(must_handle))
-		ta_handle_cmd(trans);
-}
-
-
-void DYNACALL ta_vtx_data32(void* data)
+static void DYNACALL ta_thd_data32_i(const simd256_t *data)
 {
-	SQWC(1);
-	ta_thd_data32_i(data);
-}
-
-void ta_vtx_data(u32* data, u32 size)
-{
-	DMAWC(size);
-	while(size>4)
+	if (ta_ctx == NULL)
 	{
-		ta_thd_data32_i(data);
-
-		data+=8;
-		size--;
-
-		ta_thd_data32_i(data);
-
-		data+=8;
-		size--;
-
-		ta_thd_data32_i(data);
-		data+=8;
-		size--;
-
-		ta_thd_data32_i(data);
-		data+=8;
-		size--;
+		INFO_LOG(PVR, "Warning: data sent to TA prior to ListInit. Ignored");
+		return;
+	}
+	if (ta_tad.End() - ta_tad.thd_root >= (ptrdiff_t)TA_DATA_SIZE)
+	{
+		INFO_LOG(PVR, "Warning: TA data buffer overflow");
+		asic_RaiseInterrupt(holly_MATR_NOMEM);
+		return;
 	}
 
-	while(size>0)
-	{
-		ta_thd_data32_i(data);
+	simd256_t* dst = (simd256_t*)ta_tad.thd_data;
 
-		data+=8;
+	// First byte is PCW
+	PCW pcw = *(const PCW*)data;
+	
+	// Copy the TA data
+	*dst = *data;
+
+	ta_tad.thd_data += 32;
+
+	//process TA state
+	u32 state_in = (ta_cur_state << 8) | (pcw.ParaType << 5) | ((pcw.obj_ctrl >> 2) & 31);
+
+	u32 trans = ta_fsm[state_in];
+	ta_cur_state = (ta_state)trans;
+	bool must_handle = trans & 0xF0;
+
+
+	if (likely(!must_handle))
+	{
+		return;
+	}
+	else
+	{
+		ta_handle_cmd(trans);
+	}
+}
+
+void DYNACALL ta_vtx_data32(const SQBuffer *data)
+{
+	ta_thd_data32_i((const simd256_t *)data);
+}
+
+void ta_vtx_data(const SQBuffer *data, u32 size)
+{
+	while (size >= 4)
+	{
+		ta_thd_data32_i((simd256_t *)data);
+		data++;
+		ta_thd_data32_i((simd256_t *)data);
+		data++;
+		ta_thd_data32_i((simd256_t *)data);
+		data++;
+		ta_thd_data32_i((simd256_t *)data);
+		data++;
+		size -= 4;
+	}
+
+	while (size > 0)
+	{
+		ta_thd_data32_i((simd256_t *)data);
+		data++;
 		size--;
 	}
 }

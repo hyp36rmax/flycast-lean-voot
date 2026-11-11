@@ -4,18 +4,29 @@
 
 #pragma once
 #include "types.h"
+#include "hw/hwreg.h"
 
-
-
-u32 sb_ReadMem(u32 addr,u32 sz);
-void sb_WriteMem(u32 addr,u32 data,u32 sz);
+u32 sb_ReadMem(u32 addr);
+void sb_WriteMem(u32 addr, u32 data);
 void sb_Init();
-void sb_Reset(bool Manual);
+void sb_Reset(bool hard);
 void sb_Term();
-
-extern Array<RegisterStruct> sb_regs;
+void sb_serialize(Serializer& ser);
+void sb_deserialize(Deserializer& deser);
 
 #define SB_BASE 0x005F6800
+
+extern u32 sb_regs[0x540];
+class HollyRegisters : public RegisterBank<sb_regs, 0x540, 0xffff, SB_BASE>
+{
+	using super = RegisterBank<sb_regs, 0x540, 0xffff, SB_BASE>;
+
+public:
+	void init();
+	void serialize(Serializer& ser);
+	void deserialize(Deserializer& deser);
+};
+extern HollyRegisters hollyRegs;
 
 
 //0x005F6800    SB_C2DSTAT  RW  ch2-DMA destination address
@@ -314,7 +325,7 @@ extern Array<RegisterStruct> sb_regs;
 //0x005F7CF8    SB_PDLEND   R   PVR-DMA transfer counter
 #define SB_PDLEND_addr 0x005F7CF8
 
-#define SB_REGN_32(addr) (sb_regs[(addr-SB_BASE)/4].data32)
+#define SB_REGN_32(addr) (sb_regs[((addr) - SB_BASE) / 4])
 #define SB_REG_32(name) SB_REGN_32(SB_##name##_addr)
 #define SB_REG_T(name) ((SB_name##_t&)SB_REG_T(name))
 
@@ -355,7 +366,7 @@ extern Array<RegisterStruct> sb_regs;
 //0x005F6888    SB_LMMODE1  RW  Via TA texture memory bus select 1
 #define SB_LMMODE1 SB_REG_32(LMMODE1)
 //0x005F688C    SB_FFST R   FIFO status
-extern u32 SB_FFST;
+//#define SB_FFST SB_REG_32(FFST)
 //0x005F6890    SB_SFRES    W   System reset
 #define SB_SFRES SB_REG_32(SFRES)
 
@@ -365,7 +376,10 @@ extern u32 SB_FFST;
 #define SB_RBSPLT SB_REG_32(RBSPLT)
 
 //0x005F6900    SB_ISTNRM   RW  Normal interrupt status
-extern u32 SB_ISTNRM;
+#define SB_ISTNRM SB_REG_32(ISTNRM)
+//0x025F6900    SB_ISTNRM1   RW  Normal interrupt status CLXB (Naomi 2)
+extern u32 SB_ISTNRM1;
+
 //0x005F6904    SB_ISTEXT   R   External interrupt status
 #define SB_ISTEXT SB_REG_32(ISTEXT)
 //0x005F6908    SB_ISTERR   RW  Error interrupt status
@@ -780,5 +794,3 @@ extern u32 SB_ISTNRM;
 0x005F7CF8  SB_PDLEND   R   PVR-DMA transfer counter
 
 */
-
-void sb_rio_register(u32 reg_addr, RegIO flags, RegReadAddrFP* rf=0, RegWriteAddrFP* wf=0);

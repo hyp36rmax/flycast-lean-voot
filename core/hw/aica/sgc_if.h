@@ -1,14 +1,15 @@
 #pragma once
-#include "aica.h"
+#include "types.h"
+
+namespace aica::sgc
+{
 
 void AICA_Sample();
-void AICA_Sample32();
 
-//u32 ReadChannelReg(u32 channel,u32 reg);
-void WriteChannelReg8(u32 channel,u32 reg);
+void WriteChannelReg(u32 channel, u32 reg, int size);
 
-void sgc_Init();
-void sgc_Term();
+void init();
+void term();
 
 union fp_22_10
 {
@@ -38,10 +39,11 @@ union fp_20_12
 	u32 full;
 };
 
-//#define SAMPLE_TYPE_SHIFT (8)
 typedef s32 SampleType;
 
-void ReadCommonReg(u32 reg,bool byte);
-void WriteCommonReg8(u32 reg,u32 data);
-#define clip(x,min,max) if ((x)<(min)) (x)=(min); if ((x)>(max)) (x)=(max);
-#define clip16(x) clip(x,-32768,32767)
+void ReadCommonReg(u32 reg, bool byte);
+void serialize(Serializer& ctx);
+void deserialize(Deserializer& ctx);
+void vmuBeep(int on, int period);
+
+} // namespace aica::sgc

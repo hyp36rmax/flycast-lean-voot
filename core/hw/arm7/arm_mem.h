@@ -2,69 +2,55 @@
 #include "types.h"
 #include "hw/aica/aica_if.h"
 
-template <u32 sz,class T>
-T arm_ReadReg(u32 addr);
-template <u32 sz,class T>
-void arm_WriteReg(u32 addr,T data);
-
-template<int sz,typename T>
-static inline T DYNACALL ReadMemArm(u32 addr)
+namespace aica::arm
 {
-	addr&=0x00FFFFFF;
-	if (addr<0x800000)
+
+template <typename T> T readReg(u32 addr);
+template <typename T> void writeReg(u32 addr, T data);
+
+template<typename T>
+static inline T DYNACALL readMem(u32 addr)
+{
+	addr &= 0x00FFFFFF;
+	if (addr < 0x800000)
 	{
-		T rv=*(T*)&aica_ram[addr&(ARAM_MASK-(sz-1))];
+		T rv = *(T *)&aica_ram[addr & (ARAM_MASK - (sizeof(T) - 1))];
 		
-		if (unlikely(sz==4 && addr&3))
+		if (unlikely(sizeof(T) == 4 && (addr & 3) != 0))
 		{
-			u32 sf=(addr&3)*8;
-			return (rv>>sf) | (rv<<(32-sf));
+			u32 sf = (addr & 3) * 8;
+			return (rv >> sf) | (rv << (32 - sf));
 		}
 		else
 			return rv;
 	}
 	else
 	{
-		return arm_ReadReg<sz,T>(addr);
+		return readReg<T>(addr);
 	}
 }
 
-template<int sz,typename T>
-static inline void DYNACALL WriteMemArm(u32 addr,T data)
+template<typename T>
+static inline void DYNACALL writeMem(u32 addr, T data)
 {
-	addr&=0x00FFFFFF;
-	if (addr<0x800000)
+	addr &= 0x00FFFFFF;
+	if (addr < 0x800000)
 	{
-		*(T*)&aica_ram[addr&(ARAM_MASK-(sz-1))]=data;
+		*(T *)&aica_ram[addr & (ARAM_MASK - (sizeof(T) - 1))] = data;
 	}
 	else
 	{
-		arm_WriteReg<sz,T>(addr,data);
+		writeReg(addr, data);
 	}
 }
 
-#define arm_ReadMem8 ReadMemArm<1,u8>
-#define arm_ReadMem16 ReadMemArm<2,u16>
-#define arm_ReadMem32 ReadMemArm<4,u32>
-
-#define arm_WriteMem8 WriteMemArm<1,u8>
-#define arm_WriteMem16 WriteMemArm<2,u16>
-#define arm_WriteMem32 WriteMemArm<4,u32>
-
-u32 sh4_ReadMem_reg(u32 addr,u32 size);
-void sh4_WriteMem_reg(u32 addr,u32 data,u32 size);
-
-void init_mem();
-void term_mem();
-
-#define aica_reg_16 ((u16*)aica_reg)
-
-#define AICA_RAM_SIZE (ARAM_SIZE)
-#define AICA_RAM_MASK (ARAM_MASK)
-
-#define AICA_MEMMAP_RAM_SIZE (8*1024*1024)				//this is the max for the map, the actual ram size is AICA_RAM_SIZE
-#define AICA_MEMMAP_RAM_MASK (AICA_MEMMAP_RAM_SIZE-1)
-
+extern bool aica_interr;
+extern u32 aica_reg_L;
 extern bool e68k_out;
+extern u32 e68k_reg_L;
+extern u32 e68k_reg_M;
 
 void update_armintc();
+void interruptChange(u32 bits, u32 L);
+
+} // namespace aica::arm

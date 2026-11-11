@@ -1,138 +1,218 @@
 /*
-	Command line parsing
-	~yay~
+	Copyright 2025 flyinghead
 
-	Nothing too interesting here, really
+	This file is part of Flycast.
+
+    Flycast is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 2 of the License, or
+    (at your option) any later version.
+
+    Flycast is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with Flycast.  If not, see <https://www.gnu.org/licenses/>.
 */
-
-#include <stdio.h>
-#include <string.h>
-#include <ctype.h>
-
 #include "cfg/cfg.h"
+#include "stdclass.h"
+#include <cstdio>
+#include <cstring>
 
-wchar* trim_ws(wchar* str)
+namespace config
 {
-	if (str==0 || strlen(str)==0)
-		return 0;
 
-	while(*str)
-	{
-		if (!isspace(*str))
-			break;
-		str++;
-	}
-
-	size_t l=strlen(str);
-	
-	if (l==0)
-		return 0;
-
-	while(l>0)
-	{
-		if (!isspace(str[l-1]))
-			break;
-		str[l-1]=0;
-		l--;
-	}
-
-	if (l==0)
-		return 0;
-
-	return str;
+static void usage(const char *exe)
+{
+	fprintf(stderr, "Usage: %s [option]... [<rom path>]\n", exe);
+	fprintf(stderr, "Options:\n");
+	fprintf(stderr, "-config section:key=value,...  set a transient config value.\n");
+	fprintf(stderr, "                               Transient config values won't be saved to emu.cfg.\n");
+	fprintf(stderr, "-help                          display this help\n");
 }
 
-int setconfig(wchar** arg,int cl)
+static void parseConfigOption(const std::string& str)
 {
-	int rv=0;
-	for(;;)
+	char inQuote = '\0';
+	std::string section, key, value;
+	int step = 0; // section, key, value
+	for (char c : str)
 	{
-		if (cl<1)
+		if (inQuote != '\0' && c == inQuote)
 		{
-			printf("-config : invalid number of parameters, format is section:key=value\n");
-			return rv;
-		}
-		wchar* sep=strstr(arg[1],":");
-		if (sep==0)
-		{
-			printf("-config : invalid parameter %s, format is section:key=value\n",arg[1]);
-			return rv;
-		}
-		wchar* value=strstr(sep+1,"=");
-		if (value==0)
-		{
-			printf("-config : invalid parameter %s, format is section:key=value\n",arg[1]);
-			return rv;
-		}
-
-		*sep++=0;
-		*value++=0;
-
-		wchar* sect=trim_ws(arg[1]);
-		wchar* key=trim_ws(sep);
-		value=trim_ws(value);
-
-		if (sect==0 || key==0)
-		{
-			printf("-config : invalid parameter, format is section:key=value\n");
-			return rv;
-		}
-
-		if (value==0)
-			value="";
-		printf("Virtual cfg %s:%s=%s\n",sect,key,value);
-
-		cfgSetVitual(sect,key,value);
-		rv++;
-
-		if (cl>=3 && stricmp(arg[2],",")==0)
-		{
-			cl-=2;
-			arg+=2;
-			rv++;
+			inQuote = false;
+			step = 0;
+			setTransient(section, key, value);
+			DEBUG_LOG(COMMON, "-config [%s] %s = %s", section.c_str(), key.c_str(), value.c_str());
+			section.clear();
+			key.clear();
+			value.clear();
 			continue;
 		}
-		else
+		switch (c)
+		{
+		case ':':
+			switch (step)
+			{
+			case 0:
+				if (section.empty()) {
+					WARN_LOG(COMMON, "Invalid -config option '%s'. Format is: -config section:key=value,...", str.c_str());
+					return;
+				}
+				step = 1;
+				break;
+			case 1:
+				key += c;
+				break;
+			case 2:
+				value += c;
+				break;
+			}
 			break;
+		case '=':
+			switch (step)
+			{
+			case 0:
+				WARN_LOG(COMMON, "Invalid -config option '%s'. Format is: -config section:key=value,...", str.c_str());
+				return;
+			case 1:
+				if (key.empty()) {
+					WARN_LOG(COMMON, "Invalid -config option '%s'. Format is: -config section:key=value,...", str.c_str());
+					return;
+				}
+				step = 2;
+				break;
+			case 2:
+				value += c;
+				break;
+			}
+			break;
+		case '\'':
+		case '"':
+			switch (step)
+			{
+			case 0:
+				section += c;
+				break;
+			case 1:
+				key += c;
+				break;
+			case 2:
+				if (inQuote == '\0') {
+					inQuote = c;
+					value.clear();
+				}
+				else
+					value += c;
+				break;
+			}
+			break;
+		case ',':
+			switch (step)
+			{
+			case 0:
+				// ignore consecutive commas
+				break;
+			case 1:
+				key += c;
+				break;
+			case 2:
+				if (inQuote != '\0') {
+					value += c;
+				}
+				else
+				{
+					step = 0;
+					setTransient(section, key, value);
+					DEBUG_LOG(COMMON, "-config [%s] %s = %s", section.c_str(), key.c_str(), value.c_str());
+					section.clear();
+					key.clear();
+					value.clear();
+				}
+				break;
+			}
+			break;
+		case ' ':
+			switch (step)
+			{
+			case 0:
+			case 1:
+				// Ignore
+				break;
+			case 2:
+				value += c;
+				break;
+			}
+			break;
+		default:
+			switch (step)
+			{
+			case 0:
+				section += c;
+				break;
+			case 1:
+				key += c;
+				break;
+			case 2:
+				value += c;
+				break;
+			}
+		}
 	}
-	return rv;
+	if (step == 2) {
+		setTransient(section, key, value);
+		DEBUG_LOG(COMMON, "-config [%s] %s = %s", section.c_str(), key.c_str(), value.c_str());
+	}
 }
 
-int showhelp(wchar** arg,int cl)
+void parseCommandLine(int argc, const char * const argv[])
 {
-	printf("Available commands :\n");
-
-	printf("-config	section:key=value [, ..]: add a virtual config value\n Virtual config values wont be saved to the .cfg file\n unless a different value is writen to em\nNote :\n You can specify many settings in the xx:yy=zz , gg:hh=jj , ...\n format.The spaces betwen the values and ',' are needed.");
-
-	return 0;
-}
-bool ParseCommandLine(int argc,wchar* argv[])
-{
-
-	int cl=argc-2;
-	wchar** arg=argv+1;
-	while(cl>=0)
+	settings.content.path.clear();
+	const char *exe = argv[0];
+	for (int i = 1; i < argc; i++)
 	{
-		if (stricmp(*arg,"-help")==0)
-		{
-			int as=showhelp(arg,cl);
-			cl-=as;
-			arg+=as;
-			return true;
+		if (!strcmp(argv[i], "-help") || !strcmp(argv[i], "--help")) {
+			usage(exe);
+			exit(0);
 		}
-		else if (stricmp(*arg,"-config")==0)
+		if (!strcmp(argv[i], "-config") || !strcmp(argv[i], "--config"))
 		{
-			int as=setconfig(arg,cl);
-			cl-=as;
-			arg+=as;
+			if (i < argc - 1)
+				parseConfigOption(argv[++i]);
+			continue;
 		}
-		else
+		// macOS
+		if (!strncmp(argv[i], "-NSDocumentRevisions", 20)) {
+			i++;
+			continue;
+		}
+		if (argv[i][0] == '-') {
+			WARN_LOG(COMMON, "Ignoring unknown command line option '%s'", argv[i]);
+			continue;
+		}
+		std::string extension = get_file_extension(argv[i]);
+		if (extension == "cdi" || extension == "chd"
+				|| extension == "gdi"|| extension == "cue")
 		{
-			printf("wtf %s is suposed to do ?\n",*arg);
+			INFO_LOG(COMMON, "Using '%s' as CD image", argv[i]);
+			settings.content.path = argv[i];
 		}
-		arg++;
-		cl--;
+		else if (extension == "elf")
+		{
+			INFO_LOG(COMMON, "Using '%s' as reios elf file", argv[i]);
+			setTransient("config", "bios.UseReios", "yes");
+			settings.content.path = argv[i];
+		}
+		else {
+			INFO_LOG(COMMON, "Using '%s' as rom", argv[i]);
+			settings.content.path = argv[i];
+		}
+		if (i < argc - 1)
+			WARN_LOG(COMMON, "Rest of command line ignored: '%s'...", argv[i + 1]);
+		break;
 	}
-	printf("\n");
-	return false;
 }
+
+}	// namespace config

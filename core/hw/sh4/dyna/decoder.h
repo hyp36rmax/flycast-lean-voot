@@ -1,5 +1,4 @@
 #pragma once
-#include "shil.h"
 #include "../sh4_if.h"
 
 #define mkbet(c,s,v) ((c<<3)|(s<<1)|v)
@@ -30,6 +29,48 @@ enum BlockEndType
 	BET_Cond_1=mkbet(BET_CLS_COND,BET_SCL_Jump,1),          //sr.T==1 -> BranchBlock else NextBlock
 };
 
-struct RuntimeBlockInfo;
-void dec_DecodeBlock(RuntimeBlockInfo* rbi,u32 max_cycles);
+enum NextDecoderOperation
+{
+	NDO_NextOp,     //pc+=2
+	NDO_End,        //End the block, Type = BlockEndType
+	NDO_Delayslot,  //pc+=2, NextOp=DelayOp
+};
 
+struct RuntimeBlockInfo;
+bool dec_DecodeBlock(RuntimeBlockInfo* rbi,u32 max_cycles);
+void dec_updateBlockCycles(RuntimeBlockInfo *block, u16 op);
+
+struct state_t
+{
+	NextDecoderOperation NextOp;
+	NextDecoderOperation DelayOp;
+	u32 JumpAddr;
+	u32 NextAddr;
+	BlockEndType BlockType;
+
+	struct
+	{
+		bool FPR64; //64 bit FPU opcodes
+		bool FSZ64; //64 bit FPU moves
+		bool RoundToZero; //false -> Round to nearest.
+		u32 rpc;
+		bool is_delayslot;
+	} cpu;
+
+	struct
+	{
+		bool has_readm;
+		bool has_writem;
+		bool has_fpu;
+	} info;
+};
+
+const u32 NullAddress = 0xFFFFFFFF;
+
+#define GetN(str) ((str>>8) & 0xf)
+#define GetM(str) ((str>>4) & 0xf)
+#define GetImm4(str) ((str>>0) & 0xf)
+#define GetImm8(str) ((str>>0) & 0xff)
+#define GetSImm8(str) ((s8)((str>>0) & 0xff))
+#define GetImm12(str) ((str>>0) & 0xfff)
+#define GetSImm12(str) (((short)((GetImm12(str))<<4))>>4)

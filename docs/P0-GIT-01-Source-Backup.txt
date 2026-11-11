@@ -1,0 +1,67 @@
+PROJECT OT SOURCE BACKUP POLICY — P0-GIT-01
+
+Private backup only. Public release and visibility changes require separate approval.
+Keep private Experience implementation and Flycast GPL runtime in separate repositories.
+Do development on feature branches. Make focused commits and versioned milestone tags.
+Associate physical UAT evidence with both full commit IDs, build inputs and executable hashes.
+Never alter Golden References. Never label later work as accepted without acceptance evidence.
+Verify uploaded branch and annotated tag object IDs using git ls-remote after every backup.
+Never force-push or push all branches/tags from the retained history bundles.
+Retain license/copyright files and corresponding runtime source with distributed runtime builds.
+No CI, feature changes or public release are part of this milestone.
+
+Recovery: clone the PRIVATE remote, then checkout the accepted tag below. If remote access is
+unavailable, git clone the corresponding verified checkpoint.bundle from P0-GIT-01 instead.
+The original *-history.bundle files preserve earlier history; they do not contain uncommitted
+working files. The working-tree-backup directories and vendor-source archive preserve those.
+Keep the Golden reference, working-tree backups, dependency archive and protected assets on
+separate protected backup storage as well. A second folder on the same disk is not disaster recovery.
+
+Toolchain observed: Windows x64; Git 2.54.0.windows.1; .NET SDK 10.0.401;
+CMake 4.4.3; Visual Studio 18 2026; Windows SDK 10.0.26100.0.
+Do all builds in fresh writable directories; never build inside a Golden Reference.
+
+Accepted tag: m08-v0.4.0-dev-baseline
+Accepted source commit: f2a8b707613e8239334e06cae9612d5aeaf0730c
+
+Upstream ancestry is retained. The accepted tag descends from the original M08 baseline.
+Submodule gitlinks and .gitmodules remain authoritative for upstream identities. For an online
+restore, git submodule update --init --recursive resolves those pins. The tested offline restore
+instead extracts the independently verified Flycast-vendor-source.zip into the fresh clone.
+No private Experience implementation or Track B research is included in this runtime branch.
+Dependency archive SHA256: 5B0E4361CCFA5AB0BC95CC6A1C73C4161A1EB95069D0AF6E66AA80B548FA502A
+Dependency file-level hashes and pinned submodule SHAs: Flycast-dependency-backup.json.
+The archive includes available vendor sources and upstream fixture assets, not game/BIOS data.
+cmake -S <clone> -B <fresh-build> -G "Visual Studio 18 2026" -A x64
+  -DOT_LEAN_RUNTIME=ON -DFLYCAST_HOSTED_STARTUP=ON -DUSE_DX11=ON
+  -DUSE_DX9=OFF -DUSE_OPENGL=OFF -DUSE_VULKAN=OFF -DUSE_DISCORD=OFF
+  -DENABLE_CTEST=OFF -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+cmake --build <fresh-build> --config Release --target flycast --parallel 6
+Retain LICENSE and vendor notices. Do not distribute a runtime without the applicable
+corresponding source and required notices. Existing upstream UWP signing certificate and
+text-only GDI layout test fixtures are inherited upstream; no local signing password is stored.
+Never use upstream UWP signing credentials; the Windows Release build does not use that cert.
+
+VERIFIED RECOVERY DETAILS
+For exact Golden file hashes, disable automatic line-ending conversion at clone time:
+git clone -c core.autocrlf=false -c core.longpaths=true --branch <accepted-tag> <private-url> <fresh-folder>
+The Windows default core.autocrlf=true changes some checkout bytes without changing logic.
+The accepted tags above remain fixed; later backup-branch commits add documentation only.
+Both original Windows Release source builds succeeded. The integrated Experience also embeds
+the rebuilt runtime with CabinetInputProtocol=3, GuestPauseProtocol=1, WindowInputProtocol=1,
+and the retained Solo/Local VS capability flags. No binary-for-binary equivalence is claimed.
+The default EEPROM seed was omitted for initial source compilation, then restored separately
+from the verified Golden private build inputs for the integrated package and capability tests.
+It is protected local data, never part of either Git repository or vendor-source archive.
+
+Offline dependency source is also backed up in this PRIVATE repository on backup/vendor-sources.
+Clone that branch into a separate folder. Its source-dependencies/manifest.json records part
+hashes, archive hash, all source-file hashes and excluded unused binary packages/test keys.
+Concatenate source-dependencies/Flycast-vendor-source.zip.part* in ordinal order as raw bytes;
+verify the reconstructed archive hash, then extract it into the accepted runtime checkout.
+Recovery branch commit: e6ab144d80eb986b1eb1d49bdbaf46ea590d94fd
+Dependency source archive SHA256: 2DBEA744CB1FED3ECFD970EEAA0D31F884A80161773CD62DCFFC357D89880C82
+The full pre-filter working vendor archive remains in the protected local backup; the remote
+recovery archive excludes 72 unused upstream binary packages or protected/test-key files.
+Normal Windows process permissions were required for MSBuild; the restricted build stalled.
+Use: cmake --build <fresh-build> --config Release --target flycast --parallel 4 -- /nodeReuse:false

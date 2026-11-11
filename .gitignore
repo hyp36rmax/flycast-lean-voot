@@ -1,10 +1,22 @@
+build/
+artifact/
+
+# macOS
 .DS_Store
-*.class
-*.orig
+shell/apple/emulator-ios/OpenMP/OpenMP.xcframework
 
-bin/
-gen/
-obj/
+# Visual Studio
+.vs/
+.vscode/
+out/
 
-newdc/android/libnewdc/bin/libnewdc.jar
-newdc/android/libnewdc/bin/classes/com/example/newdc/JNIdc.class
+# JetBrains IDES
+.idea/
+cmake-build-*/
+
+# Dependencies from .gitmodules
+core/deps/breakpad/
+core/deps/glslang/
+.cache/
+compile_commands.json
+CMakeUserPresets.json

@@ -1,26 +1,12 @@
 /*
 
 	This is a header file that can create 
-	a) Shil opcode enums
-	b) Shil opcode classes/portable C implementation ("canonical" implementation)
-	c) The routing table for canonical implementations
-	d) Cookies (if you're really lucky)
-
+	SHIL_MODE == 0) Shil opcode enums
+	SHIL_MODE == 1) Shil opcode classes/portable C implementation ("canonical" implementation)
+	SHIL_MODE == 2) Shil opcode classes declaration
+	SHIL_MODE == 3) The routing table for canonical implementations
+	SHIL_MODE == 4) opcode name list (for logging/disass)
 */
-#if HOST_CPU == CPU_ARM && !defined(_ANDROID)
-extern "C" void ftrv_asm(float* fd,float* fn, float* fm);
-extern "C" f32 fipr_asm(float* fn, float* fm);
-#define ftrv_impl ftrv_asm
-#define fipr_impl fipr_asm
-#endif
-
-#ifndef ftrv_impl
-#define ftrv_impl f1
-#endif
-
-#ifndef fipr_impl
-#define fipr_impl f1
-#endif
 
 #define fsca_impl fsca_table
 
@@ -35,6 +21,7 @@ extern "C" f32 fipr_asm(float* fn, float* fm);
 	#define shil_canonical(rv,name,args,code)
 	#define shil_compile(code)
 #elif  SHIL_MODE==1
+#include "hw/sh4/sh4_interrupts.h"
 	//generate structs ...
 	#define SHIL_START
 	#define SHIL_END
@@ -42,17 +29,18 @@ extern "C" f32 fipr_asm(float* fn, float* fm);
 	#define shil_opc(name) struct shil_opcl_##name { 
 	#define shil_opc_end() };
 
-	#define shil_canonical(rv,name,args,code) static rv name args { code }
+	#define shil_canonical(rv,name,args,code) struct name { static rv impl args { code } };
 	
-	#define shil_cf_arg_u32(x) ngen_CC_Param(op,&op->x,CPT_u32);
-	#define shil_cf_arg_f32(x) ngen_CC_Param(op,&op->x,CPT_f32);
-	#define shil_cf_arg_ptr(x) ngen_CC_Param(op,&op->x,CPT_ptr);
-	#define shil_cf_rv_u32(x) ngen_CC_Param(op,&op->x,CPT_u32rv);
-	#define shil_cf_rv_f32(x) ngen_CC_Param(op,&op->x,CPT_f32rv);
-	#define shil_cf_rv_u64(x) ngen_CC_Param(op,&op->rd,CPT_u64rvL); ngen_CC_Param(op,&op->rd2,CPT_u64rvH);
-	#define shil_cf(x) ngen_CC_Call(op,(void*)x);
+	#define shil_cf_arg_u32(x) sh4Dynarec->canonParam(op, &op->x, CPT_u32);
+	#define shil_cf_arg_f32(x) sh4Dynarec->canonParam(op, &op->x, CPT_f32);
+	#define shil_cf_arg_ptr(x) sh4Dynarec->canonParam(op, &op->x, CPT_ptr);
+	#define shil_cf_arg_sh4ctx() sh4Dynarec->canonParam(op, nullptr, CPT_sh4ctx);
+	#define shil_cf_rv_u32(x) sh4Dynarec->canonParam(op, &op->x, CPT_u32rv);
+	#define shil_cf_rv_f32(x) sh4Dynarec->canonParam(op, &op->x, CPT_f32rv);
+	#define shil_cf_rv_u64(x) sh4Dynarec->canonParam(op, &op->rd, CPT_u64rvL); sh4Dynarec->canonParam(op, &op->rd2, CPT_u64rvH);
+	#define shil_cf(x) sh4Dynarec->canonCall(op, (void *)&x::impl);
 
-	#define shil_compile(code) static void compile(shil_opcode* op) { ngen_CC_Start(op); code ngen_CC_Finish(op); }
+	#define shil_compile(code) static void compile(shil_opcode* op) { sh4Dynarec->canonStart(op); code sh4Dynarec->canonFinish(op); }
 #elif  SHIL_MODE==2
 	//generate struct declarations ...
 	#define SHIL_START
@@ -61,7 +49,7 @@ extern "C" f32 fipr_asm(float* fn, float* fm);
 	#define shil_opc(name) struct shil_opcl_##name { 
 	#define shil_opc_end() };
 
-	#define shil_canonical(rv,name,args,code) static rv cimpl_##name args;
+	#define shil_canonical(rv,name,args,code) struct name { static rv impl args; };
 	#define shil_compile(code) static void compile(shil_opcode* op);
 #elif  SHIL_MODE==3
 	//generate struct list ...
@@ -93,15 +81,13 @@ extern "C" f32 fipr_asm(float* fn, float* fm);
 
 
 
-#if SHIL_MODE==1
+#if SHIL_MODE==1 || SHIL_MODE==2
 //only in structs we use the code :)
-#include <math.h>
+#include <cmath>
 #include "types.h"
 #include "shil.h"
 #include "decoder.h"
 #include "../sh4_rom.h"
-
-
 
 #define BIN_OP_I_BASE(code,type,rtype) \
 shil_canonical \
@@ -138,9 +124,9 @@ shil_compile \
 #define BIN_OP_I2(tp,z) BIN_OP_I_BASE( return ((tp) r1) z ((tp) r2); ,u32,u32)
 #define BIN_OP_I3(z,w) BIN_OP_I_BASE( return (r1 z r2) w; ,u32,u32)
 #define BIN_OP_I4(tp,z,rt,pt) BIN_OP_I_BASE( return ((tp)(pt)r1) z ((tp)(pt)r2); ,u32,rt)
-	
-#define BIN_OP_F(z) BIN_OP_I_BASE( return r1 z r2; ,f32,f32)
-#define BIN_OP_FU(z) BIN_OP_I_BASE( return r1 z r2; ,f32,u32)
+
+#define BIN_OP_F(z) BIN_OP_I_BASE( return fixNaN(r1 z r2); ,f32,f32)
+#define BIN_OP_FU(z) BIN_OP_I_BASE( return fixNaN(r1 z r2); ,f32,u32)
 
 #define UN_OP_I(z) UN_OP_I_BASE( return z (r1); ,u32)
 #define UN_OP_F(z) UN_OP_I_BASE( return z (r1); ,f32)
@@ -149,6 +135,20 @@ shil_compile \
 shil_compile( \
 	die("This opcode requires native dynarec implementation"); \
 )
+
+#if SHIL_MODE==1
+
+template<int Stride = 1>
+static inline float innerProduct(const float *f1, const float *f2)
+{
+	const double f = (double)f1[0] * f2[Stride * 0]
+				   + (double)f1[1] * f2[Stride * 1]
+				   + (double)f1[2] * f2[Stride * 2]
+				   + (double)f1[3] * f2[Stride * 3];
+	return fixNaN((float)f);
+}
+
+#endif
 
 #else
 
@@ -206,18 +206,27 @@ shil_opc_end()
 
 //Canonical impl. opcodes !
 shil_opc(sync_sr)
+shil_canonical
+(
+void, f1, (),
+	UpdateSR();
+)
 shil_compile
 (
-	shil_cf(UpdateSR);
-	//die();
+	shil_cf(f1);
 )
 shil_opc_end()
 
 shil_opc(sync_fpscr)
+shil_canonical
+(
+void, f1, (Sh4Context *ctx),
+	Sh4Context::UpdateFPSCR(ctx);
+)
 shil_compile
 (
-	shil_cf(UpdateFPSCR);
-	//die();
+	shil_cf_arg_sh4ctx();
+	shil_cf(f1);
 )
 shil_opc_end()
 
@@ -282,14 +291,6 @@ u64,f1,(u32 r1,u32 r2,u32 C),
 	((u32*)&rv)[0]=res;
 	((u32*)&rv)[1]=res>>32;
 
-	/*
-	//Damn macro magic//
-#if HOST_CPU==CPU_X86
-	verify(((u32*)&rv)[1]<=1);
-	verify(C<=1);
-#endif
-	*/
-
 	return rv;
 )
 
@@ -300,13 +301,12 @@ shil_compile
 	shil_cf_arg_u32(rs1);
 	shil_cf(f1);
 	shil_cf_rv_u64(rd);
-	//die();
 )
 
 shil_opc_end()
 
 
-//shop_adc	//add with carry
+//shop_sbc	// substract with carry
 shil_opc(sbc)
 shil_canonical
 (
@@ -317,14 +317,6 @@ u64,f1,(u32 r1,u32 r2,u32 C),
 	((u32*)&rv)[0]=res;
 	((u32*)&rv)[1]=(res>>32)&1; //alternatively: res>>63
 
-	/*
-	//Damn macro magic//
-#if HOST_CPU==CPU_X86
-	verify(((u32*)&rv)[1]<=1);
-	verify(C<=1);
-#endif
-	*/
-
 	return rv;
 )
 
@@ -335,10 +327,31 @@ shil_compile
 	shil_cf_arg_u32(rs1);
 	shil_cf(f1);
 	shil_cf_rv_u64(rd);
-	//die();
 )
 shil_opc_end()
 
+//shop_negc - Negate with carry
+shil_opc(negc)
+shil_canonical
+(
+u64,f1,(u32 r1, u32 C),
+	u64 res = -(u64)r1 - C;
+
+	u64 rv;
+	((u32*)&rv)[0]=res;
+	((u32*)&rv)[1]=(res>>32)&1;
+
+	return rv;
+)
+
+shil_compile
+(
+	shil_cf_arg_u32(rs2);
+	shil_cf_arg_u32(rs1);
+	shil_cf(f1);
+	shil_cf_rv_u64(rd);
+)
+shil_opc_end()
 
 //shop_ror
 shil_opc(ror)
@@ -418,24 +431,6 @@ shil_compile
 
 shil_opc_end()
 
-
-//shop_swap -- swap all bytes in word
-shil_opc(swap)
-shil_canonical
-(
-u32,f1,(u32 r1),
-	return (r1 >>24) | ((r1 >>16)&0xFF00) |((r1&0xFF00)<<8) | (r1<<24);
-)
-
-shil_compile
-(
-	shil_cf_arg_u32(rs1);
-	shil_cf(f1);
-	shil_cf_rv_u32(rd);
-)
-
-shil_opc_end()
-
 //shop_shld
 shil_opc(shld)
 shil_canonical
@@ -458,7 +453,6 @@ shil_compile
 	shil_cf_arg_u32(rs1);
 	shil_cf(f1);
 	shil_cf_rv_u32(rd);
-	//die();
 )
 shil_opc_end()
 
@@ -484,7 +478,6 @@ shil_compile
 	shil_cf_arg_u32(rs1);
 	shil_cf(f1);
 	shil_cf_rv_u32(rd);
-	//die();
 )
 
 shil_opc_end()
@@ -502,7 +495,6 @@ shil_compile
 	shil_cf_arg_u32(rs1);
 	shil_cf(f1);
 	shil_cf_rv_u32(rd);
-	//die();
 )
 
 shil_opc_end()
@@ -521,7 +513,6 @@ shil_compile
 	shil_cf_arg_u32(rs1);
 	shil_cf(f1);
 	shil_cf_rv_u32(rd);
-	//die();
 )
 
 shil_opc_end()
@@ -557,9 +548,20 @@ shil_opc_end()
 shil_opc(div32u)
 shil_canonical
 (
-u64,f1,(u32 r1,u32 r2),
-	u32 quo=r1/r2;
-	u32 rem=r1%r2;
+u64,f1,(u32 r1, u32 r2, u32 r3),
+	u64 dividend = ((u64)r3 << 32) | r1;
+	u32 quo;
+	u32 rem;
+	if (r2)
+	{
+		quo = dividend / r2;
+		rem = dividend % r2;
+	}
+	else
+	{
+		quo = 0;
+		rem = dividend;
+	}
 
 	u64 rv;
 	((u32*)&rv)[0]=quo;
@@ -569,11 +571,11 @@ u64,f1,(u32 r1,u32 r2),
 
 shil_compile
 (
+	shil_cf_arg_u32(rs3);
 	shil_cf_arg_u32(rs2);
 	shil_cf_arg_u32(rs1);
 	shil_cf(f1);
 	shil_cf_rv_u64(rd);
-	//die();
 )
 
 shil_opc_end()
@@ -582,9 +584,20 @@ shil_opc_end()
 shil_opc(div32s)
 shil_canonical
 (
-u64,f1,(s32 r1,s32 r2),
-	u32 quo=r1/r2;
-	u32 rem=r1%r2;
+u64,f1,(u32 r1, s32 r2, s32 r3),
+	s64 dividend = ((s64)r3 << 32) | r1;
+	// 1's complement -> 2's complement
+	if (dividend < 0)
+		dividend++;
+
+	s32 quo = (s32)(r2 ? dividend / r2 : 0);
+	s32 rem = dividend - quo * r2;
+	u32 negative = (r3 ^ r2) & 0x80000000;
+	// 2's complement -> 1's complement
+	if (negative)
+		quo--;
+	else if (r3 < 0)
+		rem--;
 
 	u64 rv;
 	((u32*)&rv)[0]=quo;
@@ -594,11 +607,11 @@ u64,f1,(s32 r1,s32 r2),
 
 shil_compile
 (
+	shil_cf_arg_u32(rs3);
 	shil_cf_arg_u32(rs2);
 	shil_cf_arg_u32(rs1);
 	shil_cf(f1);
 	shil_cf_rv_u64(rd);
-	//die();
 )
 
 shil_opc_end()
@@ -607,10 +620,20 @@ shil_opc_end()
 shil_opc(div32p2)
 shil_canonical
 (
-u32,f1,(s32 a,s32 b,s32 T),
-	if (!T)
+u32,f1,(s32 a,s32 b,u32 T),
+	// the sign of the quotient is stored in bit 31 of T
+	if (!(T & 0x80000000))
 	{
-		a-=b;
+		if (!(T & 1))
+			a -= b;
+	}
+	else
+	{
+		// 2's complement -> 1's complement
+		if (b > 0)
+			a--;
+		if (T & 1)
+			a += b;
 	}
 
 	return a;
@@ -623,9 +646,36 @@ shil_compile
 	shil_cf_arg_u32(rs1);
 	shil_cf(f1);
 	shil_cf_rv_u32(rd);
-	//die();
 )
 
+shil_opc_end()
+
+//shop_div1
+shil_opc(div1)
+shil_canonical
+(
+u64,f1,(u32 a, s32 b, u32 T, Sh4Context *ctx),
+	sr_t& sr = ctx->sr;
+	bool qxm = sr.Q ^ sr.M;
+	sr.Q = (int)a < 0;
+	a = (a << 1) | T;
+
+	u32 oldA = a;
+	a += (qxm ? 1 : -1) * b; 	// b if sr.Q != sr.M, -b otherwise
+	sr.Q ^= sr.M ^ (qxm ? a < oldA : a > oldA);
+	T = !(sr.Q ^ sr.M);
+
+	return a | ((u64)T << 32);
+)
+shil_compile
+(
+	shil_cf_arg_sh4ctx();
+	shil_cf_arg_u32(rs3);
+	shil_cf_arg_u32(rs2);
+	shil_cf_arg_u32(rs1);
+	shil_cf(f1);
+	shil_cf_rv_u64(rd);
+)
 shil_opc_end()
 
 //debug_3
@@ -633,7 +683,7 @@ shil_opc(debug_3)
 shil_canonical
 (
 void,f1,(u32 r1,u32 r2,u32 r3),
-	printf("%08X, %08X, %08X\n",r1,r2,r3);
+	INFO_LOG(DYNAREC, "debug_3: %08X, %08X, %08X", r1, r2, r3);
 )
 
 shil_compile
@@ -651,7 +701,7 @@ shil_opc(debug_1)
 shil_canonical
 (
 void,f1,(u32 r1),
-	printf("%08X\n",r1);
+	INFO_LOG(DYNAREC, "debug_1: %08X", r1);
 )
 
 shil_compile
@@ -664,18 +714,46 @@ shil_opc_end()
 
 //shop_cvt_f2i_t	//float to integer : truncate
 shil_opc(cvt_f2i_t)
+
+#if HOST_CPU == CPU_X86 || HOST_CPU == CPU_X64
 shil_canonical
 (
 u32,f1,(f32 f1),
-	return (s32)f1;
+	s32 res;
+	if (f1 > 2147483520.0f) { // IEEE 754: 0x4effffff
+		res = 0x7fffffff;
+	}
+	else {
+		res = (s32)f1;
+		// Fix result sign for Intel CPUs
+		if ((u32)res == 0x80000000 && f1 > 0)
+			res = 0x7fffffff;
+	}
+	return res;
 )
+#elif HOST_CPU == CPU_ARM || HOST_CPU == CPU_ARM64
+shil_canonical
+(
+u32,f1,(f32 f1),
+	s32 res;
+	if (f1 > 2147483520.0f) { // IEEE 754: 0x4effffff
+		res = 0x7fffffff;
+	}
+	else {
+		res = (s32)f1;
+		// conversion of NaN returns 0 on ARM
+		if (std::isnan(f1))
+			res = 0x80000000;
+	}
+	return res;
+)
+#endif
 
 shil_compile
 (
 	shil_cf_arg_f32(rs1);
 	shil_cf(f1);
 	shil_cf_rv_u32(rd);
-	//die();
 )
 
 shil_opc_end()
@@ -693,7 +771,6 @@ shil_compile
 	shil_cf_arg_u32(rs1);
 	shil_cf(f1);
 	shil_cf_rv_f32(rd);
-	//die();
 )
 
 shil_opc_end()
@@ -711,7 +788,6 @@ shil_compile
 	shil_cf_arg_u32(rs1);
 	shil_cf(f1);
 	shil_cf_rv_f32(rd);
-	//die();
 )
 
 shil_opc_end()
@@ -721,28 +797,15 @@ shil_opc_end()
 shil_opc(pref)
 shil_canonical
 (
-void,f1,(u32 r1),
-	if ((r1>>26) == 0x38) do_sqw_mmu(r1);
-)
-
-shil_canonical
-(
-void,f2,(u32 r1),
-	if ((r1>>26) == 0x38) do_sqw_nommu(r1,sq_both);
+void,f1,(u32 r1, Sh4Context *ctx),
+	if ((r1 >> 26) == 0x38) ctx->doSqWrite(r1, ctx);
 )
 
 shil_compile
 (
+	shil_cf_arg_sh4ctx();
 	shil_cf_arg_u32(rs1);
-	if (CCN_MMUCR.AT)
-	{
-		shil_cf(f1);
-	}
-	else
-	{
-		shil_cf(f2);
-	}
-	//die();
+	shil_cf(f1);
 )
 
 shil_opc_end()
@@ -837,77 +900,47 @@ shil_opc(fsqrt)
 UN_OP_F(sqrtf)
 shil_opc_end()
 
-
 //shop_fipr
 shil_opc(fipr)
+
 shil_canonical
 (
-f32,f1,(float* fn, float* fm),
-	float idp;
+f32,f1,(const float* fn, const float* fm),
 
-	idp=fn[0]*fm[0];
-	idp+=fn[1]*fm[1];
-	idp+=fn[2]*fm[2];
-	idp+=fn[3]*fm[3];
-
-	return idp;
+	return innerProduct(fn, fm);
 )
 
 shil_compile
 (
 	shil_cf_arg_ptr(rs2);
 	shil_cf_arg_ptr(rs1);
-	shil_cf(fipr_impl);
+	shil_cf(f1);
 	shil_cf_rv_f32(rd);
-	//die();
 )
-
 shil_opc_end()
-
-
 
 //shop_ftrv
 shil_opc(ftrv)
 shil_canonical
 (
-void,f1,(float* fd,float* fn, float* fm),
-	float v1;
-	float v2;
-	float v3;
-	float v4;
+void,f1,(float *fd, const float *fn, const float *fm),
 
-	v1 = fm[0]  * fn[0] +
-		 fm[4]  * fn[1] +
-		 fm[8]  * fn[2] +
-		 fm[12] * fn[3];
-
-	v2 = fm[1]  * fn[0] +
-		 fm[5]  * fn[1] +
-		 fm[9]  * fn[2] +
-		 fm[13] * fn[3];
-
-	v3 = fm[2]  * fn[0] +
-		 fm[6]  * fn[1] +
-		 fm[10] * fn[2] +
-		 fm[14] * fn[3];
-
-	v4 = fm[3]  * fn[0] +
-		 fm[7]  * fn[1] +
-		 fm[11] * fn[2] +
-		 fm[15] * fn[3];
-
+	float v1 = innerProduct<4>(fn, fm);
+	float v2 = innerProduct<4>(fn, fm + 1);
+	float v3 = innerProduct<4>(fn, fm + 2);
+	float v4 = innerProduct<4>(fn, fm + 3);
 	fd[0] = v1;
 	fd[1] = v2;
 	fd[2] = v3;
 	fd[3] = v4;
 )
+
 shil_compile
 (
 	shil_cf_arg_ptr(rs2);
 	shil_cf_arg_ptr(rs1);
 	shil_cf_arg_ptr(rd);
-	shil_cf(ftrv_impl);
-	//die();
+	shil_cf(f1);
 )
 shil_opc_end()
 
@@ -916,7 +949,7 @@ shil_opc(fmac)
 shil_canonical
 (
 f32,f1,(float fn, float f0,float fm),
-	return fn + f0 * fm;
+	return fixNaN(std::fma(f0, fm, fn));
 )
 shil_compile
 (
@@ -925,7 +958,6 @@ shil_compile
 	shil_cf_arg_f32(rs1);
 	shil_cf(f1);
 	shil_cf_rv_f32(rd);
-	//die();
 )
 shil_opc_end()
 
@@ -981,11 +1013,11 @@ shil_opc_end()
 
 
 
-//shop_ftrv
+//shop_frswap
 shil_opc(frswap)
 shil_canonical
 (
-void,f1,(u64* fd1,u64* fd2,u64* fs1,u64* fs2),
+void,f1,(u64* fd1, u64* fd2, const u64* fs1, const u64* fs2),
 
 	u64 temp;
 	for (int i=0;i<8;i++)
@@ -1001,6 +1033,40 @@ shil_compile
 	shil_cf_arg_ptr(rs1);
 	shil_cf_arg_ptr(rd);
 	shil_cf_arg_ptr(rd2);
+	shil_cf(f1);
+)
+shil_opc_end()
+
+//shop_xtrct
+shil_opc(xtrct)
+shil_canonical
+(
+u32,f1,(u32 r1, u32 r2),
+	return (r1 >> 16) | (r2 << 16);
+)
+shil_compile
+(
+	shil_cf_arg_u32(rs2);
+	shil_cf_arg_u32(rs1);
+	shil_cf(f1);
+	shil_cf_rv_u32(rd);
+)
+shil_opc_end()
+
+// shop_illegal: illegal instruction
+shil_opc(illegal)
+shil_canonical
+(
+void,f1,(u32 epc, u32 delaySlot),
+	if (delaySlot == 1)
+		Do_Exception(epc - 2, Sh4Ex_SlotIllegalInstr);
+	else
+		Do_Exception(epc, Sh4Ex_IllegalInstr);
+)
+shil_compile
+(
+	shil_cf_arg_u32(rs2);
+	shil_cf_arg_u32(rs1);
 	shil_cf(f1);
 )
 shil_opc_end()

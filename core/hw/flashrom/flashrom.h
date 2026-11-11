@@ -1,9 +1,23 @@
 /*
-	bios & nvmem related code
-*/
+	This file is part of Flycast.
 
+    Flycast is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 2 of the License, or
+    (at your option) any later version.
+
+    Flycast is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with Flycast.  If not, see <https://www.gnu.org/licenses/>.
+ */
 #pragma once
 #include "types.h"
+#include "serialize.h"
+#include <cmath>
 
 struct MemChip
 {
@@ -11,244 +25,413 @@ struct MemChip
 	u32 size;
 	u32 mask;
 
-	MemChip(u32 size)
+protected:
+	u32 write_protect_size;
+	std::string load_filename;
+
+	MemChip(u32 size, u32 write_protect_size = 0)
 	{
-		this->data=new u8[size];
-		this->size=size;
-		this->mask=size-1;//must be power of 2
+		this->data = new u8[size]();
+		this->size = size;
+		this->mask = size - 1; // must be power of 2
+		this->write_protect_size = write_protect_size;
 	}
-	~MemChip() { delete[] data; }
+
+public:
+	virtual ~MemChip()
+	{
+		delete[] data;
+	}
 
 	virtual u8 Read8(u32 addr)
 	{
-		return data[addr&mask];
+		return data[addr & mask];
 	}
 
-	u32 Read(u32 addr,u32 sz) 
+	u32 Read(u32 addr, u32 sz)
 	{
-		addr&=mask;
+		addr &= mask;
 
-		u32 rv=0;
+		u32 rv = 0;
 
-		for (u32 i=0;i<sz;i++)
-			rv|=Read8(addr+i)<<(i*8);
+		for (u32 i = 0; i < sz; i++)
+			rv |= Read8(addr + i) << (i * 8);
 
 		return rv;
 	}
 
-	bool Load(const string& file)
-	{
-		FILE* f=fopen(file.c_str(),"rb");
-		if (f)
-		{
-			bool rv=fread(data,1,size,f)==size;
-			fclose(f);
-			return rv;
-		}
-		return false;
-	}
+	bool Load(const std::string& file);
+	bool Load(const std::string &prefix, const std::string &names_ro,
+			const std::string &title);
+	void Load(const u8 *data, size_t size);
+	void digest(u8 md5Digest[16]);
 
-	void Save(const string& file)
-	{
-		FILE* f=fopen(file.c_str(),"wb");
-		if (f)
-		{
-			fwrite(data,1,size,f);
-			fclose(f);
-		}
-	}
-
-	bool Load(const string& root,const string& prefix,const string& names_ro,const string& title)
-	{
-		wchar base[512];
-		wchar temp[512];
-		wchar names[512];
-		strcpy(names,names_ro.c_str());
-		sprintf(base,"%s",root.c_str());
-
-		wchar* curr=names;
-		wchar* next;
-		do
-		{
-			next=strstr(curr,";");
-			if(next) *next=0;
-			if (curr[0]=='%')
-			{
-				sprintf(temp,"%s%s%s",base,prefix.c_str(),curr+1);
-			}
-			else
-			{
-				sprintf(temp,"%s%s",base,curr);
-			}
-			
-			curr=next+1;
-
-			if (Load(temp))
-			{
-				printf("Loaded %s as %s\n\n",temp,title.c_str());
-				return true;
-			}
-		} while(next);
-
-
-		return false;
-	}
-	void Save(const string& root,const string& prefix,const string& name_ro,const string& title)
-	{
-		wchar path[512];
-
-		sprintf(path,"%s%s%s",root.c_str(),prefix.c_str(),name_ro.c_str());
-		Save(path);
-
-		printf("Saved %s as %s\n\n",path,title.c_str());
-	}
+	virtual void Reset() {}
+	virtual void Serialize(Serializer& ser) const { }
+	virtual void Deserialize(Deserializer& deser) { }
 };
+
+struct WritableChip : MemChip
+{
+protected:
+	WritableChip(u32 size, u32 write_protect_size = 0)
+		: MemChip(size, write_protect_size) {}
+
+public:
+	virtual void Write(u32 addr, u32 data, u32 size) = 0;
+	void Save(const std::string& file);
+	void Save(const std::string &prefix, const std::string &name_ro,
+			const std::string &title);
+};
+
 struct RomChip : MemChip
 {
 	RomChip(u32 sz) : MemChip(sz) {}
-	void Reset()
-	{
-		//nothing, its permanent read only ;p
-	}
-	void Write(u32 addr,u32 data,u32 sz)
-	{
-		die("Write to RomChip is not possible, address=%x, data=%x, size=%d");
-	}
 };
-struct SRamChip : MemChip
-{
-	SRamChip(u32 sz) : MemChip(sz) {}
 
-	void Reset()
+struct SRamChip : WritableChip
+{
+	SRamChip(u32 sz, u32 write_protect_size = 0) : WritableChip(sz, write_protect_size) {}
+
+	void Write(u32 addr, u32 val, u32 sz) override
 	{
-		//nothing, its battery backed up storage
-	}
-	void Write(u32 addr,u32 val,u32 sz)
-	{
-		addr&=mask;
+		addr &= mask;
+		if (addr < write_protect_size)
+			return;
 		switch (sz)
 		{
 		case 1:
-			data[addr]=(u8)val;
+			data[addr] = (u8)val;
 			return;
 		case 2:
-			*(u16*)&data[addr]=(u16)val;
+			*(u16 *)&data[addr] = (u16)val;
 			return;
 		case 4:
-			*(u32*)&data[addr]=val;
+			*(u32 *)&data[addr] = val;
 			return;
+		default:
+			die("invalid access size");
 		}
+	}
 
-		die("invalid access size");
+	void Serialize(Serializer& ser) const override
+	{
+		ser.serialize(&this->data[write_protect_size], size - write_protect_size);
+	}
+	void Deserialize(Deserializer& deser) override
+	{
+		deser.deserialize(&this->data[write_protect_size], size - write_protect_size);
 	}
 };
-struct DCFlashChip : MemChip // I think its Micronix :p
+
+//
+// Flash block handling code borrowed from redream (https://github.com/inolen/redream)
+//
+
+// magic cookie every block-allocated partition begins with
+#define FLASH_MAGIC_COOKIE "KATANA_FLASH____"
+
+#define FLASH_BLOCK_SIZE 0x40
+// each bitmap is 64 bytes in length, and each byte can record the state of 8
+// physical blocks (one per bit), therefore, each bitmap can represent up to
+// 512 physical blocks. these 512 blocks are each 64-bytes in length, meaning
+// each partition would need partition_size / 32768 bitmap blocks to represent
+// all of its physical blocks
+#define FLASH_BITMAP_BLOCKS (FLASH_BLOCK_SIZE * 8)
+#define FLASH_BITMAP_BYTES (FLASH_BITMAP_BLOCKS * 64)
+
+// flash partitions
+#define FLASH_PT_FACTORY 0
+#define FLASH_PT_RESERVED 1
+#define FLASH_PT_USER 2
+#define FLASH_PT_GAME 3
+#define FLASH_PT_UNKNOWN 4
+#define FLASH_PT_NUM 5
+
+// flash logical blocks
+#define FLASH_USER_SYSCFG 0x05
+#define FLASH_USER_INET 0x80
+#define FLASH_USER_ISP1 0xC0
+#define FLASH_USER_ISP2 0xC6
+#define FLASH_USER_BBA 0xE0
+
+struct flash_syscfg_block {
+  u16 block_id;
+  // last set time (seconds since 1/1/1950 00:00)
+  u16 time_lo;
+  u16 time_hi;
+	// in 15 mins increment, from -48 (West) to +52 (East), unused
+  int8_t time_zone;
+  u8 lang;
+  u8 mono;
+  u8 autostart;
+  u8 unknown2[4];
+  u8 reserved[50];
+};
+static_assert(sizeof(flash_syscfg_block) == 64);
+
+struct flash_isp1_block {
+	u16 block_id;
+	u8 _unknown[4];
+	char sega[4];
+	char username[28];
+	char password[16];
+	char phone[8];
+	u16 crc;
+};
+static_assert(sizeof(flash_isp1_block) == 64);
+
+struct flash_isp2_block {
+	u16 block_id;
+	char sega[4];
+	char username[28];
+	char password[16];
+	char phone[12];
+	u16 crc;
+};
+static_assert(sizeof(flash_isp2_block) == 64);
+
+#pragma pack(push,1)
+struct flash_bba_block {
+	u16 block_id;
+	char sega[4];
+	u32 unk1;
+	u32 ipAddress;
+	u32 netmask;
+	u32 broadcast;
+	u32 dns1;
+	u32 dns2;
+	u32 gateway;
+	char unk2[28];
+	u16 crc;
+};
+#pragma pack(pop)
+static_assert(sizeof(flash_bba_block) == 64);
+
+// header block in block-allocated partition
+struct flash_header_block {
+  char magic[16];
+  u8 part_id;
+  u8 version;
+  u8 reserved[46];
+};
+static_assert(sizeof(flash_header_block) == 64);
+
+// user block in block-allocated partition
+struct flash_user_block {
+  u16 block_id;
+  u8 data[60];
+  u16 crc;
+};
+static_assert(sizeof(flash_user_block) == 64);
+
+// Macronix 29LV160TMC
+// AtomisWave uses a custom 29L001mc model
+struct DCFlashChip : WritableChip
 {
-	DCFlashChip(u32 sz): MemChip(sz) { }
+	DCFlashChip(u32 sz, u32 write_protect_size = 0): WritableChip(sz, write_protect_size), state(FS_Normal) { }
 
 	enum FlashState
 	{
-		FS_CMD_AA, //Waiting AA
-		FS_CMD_55, //Waiting 55
-		FS_CMD,    //Waiting command
-
-		FS_Erase_AA,
-		FS_Erase_55,
-		FS_Erase,
-
-		FS_Write,
-		
-
+		FS_Normal,
+		FS_ReadAMDID1,
+		FS_ReadAMDID2,
+		FS_ByteProgram,
+		FS_EraseAMD1,
+		FS_EraseAMD2,
+		FS_EraseAMD3,
+		FS_SelectMode,
 	};
 
 	FlashState state;
-	void Reset()
+	void Reset() override
 	{
 		//reset the flash chip state
-		state=FS_CMD_AA;
+		state = FS_Normal;
 	}
 	
-	virtual u8 Read8(u32 addr)
+	void Write(u32 addr,u32 val,u32 sz) override;
+
+	u8 Read8(u32 addr) override
 	{
-		u32 rv=MemChip::Read8(addr);
-
-		#if DC_PLATFORM==DC_PLATFORM_NORMAL
-			if ((addr==0x1A002 || addr==0x1A0A2) && settings.dreamcast.region<=2)
-				return '0' + settings.dreamcast.region;
-			else if ((addr==0x1A004 || addr==0x1A0A4) && settings.dreamcast.broadcast<=3)
-				return '0' + settings.dreamcast.broadcast;
-		#endif
-
-		return rv;
-	}
-	
-
-	void Write(u32 addr,u32 val,u32 sz)
-	{
-		if (sz != 1)
-			die("invalid access size");
-
-		addr &= mask;
-		
-		switch(state)
+		if (state == FS_SelectMode)
 		{
-		case FS_Erase_AA:
-		case FS_CMD_AA:
+			state = FS_Normal;
+			switch (addr & 0x43)
 			{
-				verify(addr==0x5555 && val==0xAA);
-				state = (FlashState)(state + 1);
+			case 0:	// manufacturer's code
+				return 4;		// or 0x20 or 1
+			case 1:	// device code
+				return 0xb0;	// or 0x40 or 0x3e
+			case 2:	// sector protection verification
+				// sector protection
+				DEBUG_LOG(FLASHROM, "Sector protection address %x", addr);
+				return (addr & 0x1e000) == 0x1a000;
+			default:
+				WARN_LOG(FLASHROM, "SelectMode unknown address %x", addr);
+				return 0;
 			}
-			break;
+		}
+		return MemChip::Read8(addr);
+	}
 
-		case FS_Erase_55:
-		case FS_CMD_55:
-			{
-				verify((addr==0xAAAA || addr==0x2AAA) && val==0x55);
-				state = (FlashState)(state + 1);
-			}
-			break;
+	int WriteBlock(u32 part_id, u32 block_id, const void *data);
+	int ReadBlock(u32 part_id, u32 block_id, void *data);
 
-		case FS_CMD:
-			{
-				switch(val)
-				{
-				case 0xA0:
-					state=FS_Write;
-					break;
-				case 0x80:
-					state=FS_Erase_AA;
-					break;
-				default:
-					printf("Flash write: address=%06X, value=%08X, size=%d\n",addr,val,sz);
-					state=FS_CMD_AA;
-					die("lolwhut");
-				}
-			}
+	void GetPartitionInfo(int part_id, int *offset, int *size)
+	{
+		switch (part_id)
+		{
+		case FLASH_PT_FACTORY:
+			*offset = 0x1a000;
+			*size = 8_KB;
 			break;
-
-		case FS_Erase:
-			{
-				switch(val)
-				{
-				case 0x30:
-					printf("Erase Sector %08X! (%08X)\n",addr,addr&(~0x3FFF));
-					memset(&data[addr&(~0x3FFF)],0xFF,0x4000);
-					break;
-				default:
-					printf("Flash write: address=%06X, value=%08X, size=%d\n",addr,val,sz);
-					die("erase .. what ?");
-				}
-				state=FS_CMD_AA;
-			}
+		case FLASH_PT_RESERVED:
+			*offset = 0x18000;
+			*size = 8_KB;
 			break;
-
-		case FS_Write:
-			{
-				//printf("flash write\n");
-				data[addr]&=val;
-				state=FS_CMD_AA;
-			}
+		case FLASH_PT_USER:
+			*offset = 0x1c000;
+			*size = 16_KB;
+			break;
+		case FLASH_PT_GAME:
+			*offset = 0x10000;
+			*size = 32_KB;
+			break;
+		case FLASH_PT_UNKNOWN:
+			*offset = 0x00000;
+			*size = 64_KB;
+			break;
+		default:
+			*offset = 0;
+			*size = 0;
+			die("unknown partition");
 			break;
 		}
-	}	
+	}
+
+	void Validate();
+
+private:
+	int crc_block(struct flash_user_block *block)
+	{
+		const u8 *buf = (const u8 *)block;
+		int size = 62;
+		int n = 0xffff;
+
+		for (int i = 0; i < size; i++) {
+			n ^= (buf[i] << 8);
+
+			for (int c = 0; c < 8; c++) {
+				if (n & 0x8000) {
+					n = (n << 1) ^ 4129;
+				} else {
+					n = (n << 1);
+				}
+			}
+		}
+
+		return (~n) & 0xffff;
+	}
+
+	int validate_crc(struct flash_user_block *user)
+	{
+		return user->crc == crc_block(user);
+	}
+
+	inline int num_physical_blocks(u32 size)
+	{
+		return size / FLASH_BLOCK_SIZE;
+	}
+
+	inline int num_bitmap_blocks(u32 size)
+	{
+		return (int)std::ceil(size / (float)FLASH_BITMAP_BYTES);
+	}
+
+	inline int num_user_blocks(u32 size)
+	{
+		return num_physical_blocks(size) - num_bitmap_blocks(size) - 1;
+	}
+
+	inline int is_allocated(const u8 *bitmap, u32 phys_id)
+	{
+		int index = (phys_id - 1) % FLASH_BITMAP_BLOCKS;
+		return (bitmap[index / 8] & (0x80 >> (index % 8))) == 0x0;
+	}
+
+	inline void set_allocated(u8 *bitmap, u32 phys_id)
+	{
+		int index = (phys_id - 1) % FLASH_BITMAP_BLOCKS;
+		bitmap[index / 8] &= ~(0x80 >> (index % 8));
+	}
+
+	void write_physical_block(u32 offset, u32 phys_id, const void *data)
+	{
+		memcpy(&this->data[offset + phys_id * FLASH_BLOCK_SIZE], data, FLASH_BLOCK_SIZE);
+	}
+
+	void read_physical_block(u32 offset, u32 phys_id, void *data)
+	{
+		memcpy(data, &this->data[offset + phys_id * FLASH_BLOCK_SIZE], FLASH_BLOCK_SIZE);
+	}
+
+	int validate_header(u32 offset, u32 part_id)
+	{
+		struct flash_header_block header;
+		read_physical_block(offset, 0, &header);
+
+		if (memcmp(header.magic, FLASH_MAGIC_COOKIE, sizeof(header.magic)) != 0)
+			return 0;
+
+		if (header.part_id != part_id)
+			return 0;
+
+		return 1;
+	}
+
+	int validate_header(u32 part_id)
+	{
+		int offset, size;
+		GetPartitionInfo(part_id, &offset, &size);
+
+		return validate_header(offset, part_id);
+	}
+
+	int alloc_block(u32 offset, u32 size);
+	int lookup_block(u32 offset, u32 size, u32 block_id);
+
+	void Serialize(Serializer& ser) const override
+	{
+		ser << state;
+		ser.serialize(&this->data[write_protect_size], size - write_protect_size);
+	}
+
+	void Deserialize(Deserializer& deser) override
+	{
+		deser >> state;
+		deser.deserialize(&this->data[write_protect_size], size - write_protect_size);
+	}
+
+	void erase_partition(u32 part_id)
+	{
+		int offset, size;
+		GetPartitionInfo(part_id, &offset, &size);
+
+		memset(data + offset, 0xFF, size);
+	}
+
+	void write_header(int part_id)
+	{
+		int offset, size;
+		GetPartitionInfo(part_id, &offset, &size);
+
+		struct flash_header_block header;
+		memset(&header, 0xff, sizeof(header));
+		memcpy(header.magic, FLASH_MAGIC_COOKIE, sizeof(header.magic));
+		header.part_id = part_id;
+		header.version = 0;
+
+		write_physical_block(offset, 0, &header);
+	}
 };

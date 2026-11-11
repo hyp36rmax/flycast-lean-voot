@@ -1,201 +1,175 @@
-#include "types.h"
-
-
-
 #include "common.h"
+#include "stdclass.h"
+#include "oslib/storage.h"
+#include "oslib/i18n.h"
+#include "chdpsr/cdipsr.h"
 
-#include "deps/chdpsr/cdipsr.h"
-
-Disc* cdi_parse(wchar* file)
+Disc* cdi_parse(const char* file, std::vector<u8> *digest)
 {
-	FILE* fsource=fopen(file,"rb");
+	if (get_file_extension(file) != "cdi")
+		return nullptr;
 
-	if (!fsource)
-		return 0;
+	hostfs::File *fsource = hostfs::storage().openFile(file, "rb");
 
-	Disc* rv= new Disc();
-
-	image_s image = { 0 };
-	track_s track = { 0 };
-	CDI_init(fsource,&image,0);
-
-	CDI_get_sessions(fsource,&image);
-
-	image.remaining_sessions = image.sessions;
-
-	/////////////////////////////////////////////////////////////// Loop sessions
-	
-	bool ft=true, CD_M2=false,CD_M1=false,CD_DA=false;
-
-	while(image.remaining_sessions > 0)
+	if (fsource == nullptr)
 	{
-		ft=true;
-		image.global_current_session++;
+		WARN_LOG(GDROM, "Cannot open file '%s' errno %d", file, errno);
+		throw FlycastException(strprintf(i18n::T("Cannot open CDI file %s"), file));
+	}
+	try {
+		image_s image = { 0 };
+		track_s track = { 0 };
+		if (!CDI_init(fsource, &image, file))
+			throw FlycastException(strprintf(i18n::T("Invalid CDI file %s"), file));
+	
+		if (!CDI_get_sessions(fsource, &image)) {
+			WARN_LOG(GDROM, "Invalid CDI file '%s': can't get sessions", file);
+			throw FlycastException(i18n::Ts("Invalid CDI image"));
+		}
+		if (image.sessions > 255) {
+			WARN_LOG(GDROM, "Invalid CDI file '%s': too many sessions (%d)", file, image.sessions);
+			throw FlycastException(i18n::Ts("Invalid CDI image"));
+		}
 
-		CDI_get_tracks (fsource, &image);
+		std::unique_ptr<Disc> rv = std::make_unique<Disc>();
 
-		image.header_position = ftell(fsource);
+		image.remaining_sessions = image.sessions;
 
-		printf("\nSession %d has %d track(s)\n",image.global_current_session,image.tracks);
+		/////////////////////////////////////////////////////////////// Loop sessions
 
-		if (image.tracks == 0)
-			printf("Open session\n");
-		else
+		bool ft=true, CD_M2=false,CD_M1=false,CD_DA=false;
+
+		while(image.remaining_sessions > 0)
 		{
-			// Clear cuesheet
-			image.remaining_tracks = image.tracks;
+			ft=true;
+			image.global_current_session++;
 
-			///////////////////////////////////////////////////////////////// Loop tracks
+			if (!CDI_get_tracks(fsource, &image)) {
+				WARN_LOG(GDROM, "Invalid CDI file '%s': can't get tracks", file);
+				throw FlycastException(i18n::Ts("Invalid CDI image"));
+			}
 
-			while(image.remaining_tracks > 0)
+			image.header_position = fsource->tell();
+
+			if (image.tracks == 0)
+				INFO_LOG(GDROM, "Open session");
+			else
 			{
-				track.global_current_track++;
-				track.number = image.tracks - image.remaining_tracks + 1;
-
-				CDI_read_track (fsource, &image, &track);
-
-				image.header_position = ftell(fsource);
-
-				// Show info
-
-				printf("Saving  ");
-				printf("Track: %2d  ",track.global_current_track);
-				printf("Type: ");
-				switch(track.mode)
-				{
-				case 0 : printf("Audio/"); break;
-				case 1 : printf("Mode1/"); break;
-				case 2 :
-				default: printf("Mode2/"); break;
+				if (image.tracks > 100) {
+					WARN_LOG(GDROM, "Invalid CDI file '%s': too many tracks (%d)", file, image.tracks);
+					throw FlycastException(i18n::Ts("Invalid CDI image"));
 				}
-				printf("%d  ",track.sector_size);
-				
-				printf("Pregap: %-3ld  ",track.pregap_length);
-				printf("Size: %-6ld  ",track.length);
-				printf("LBA: %-6ld  ",track.start_lba);
-				
-				if (ft)
+				// Clear cuesheet
+				image.remaining_tracks = image.tracks;
+
+				///////////////////////////////////////////////////////////////// Loop tracks
+
+				while(image.remaining_tracks > 0)
 				{
-					ft=false;
-					Session s;
-					s.StartFAD=track.pregap_length + track.start_lba;
-					s.FirstTrack=track.global_current_track;
-					rv->sessions.push_back(s);
-				}
+					track.global_current_track++;
+					track.number = image.tracks - image.remaining_tracks + 1;
 
-				Track t;
-				if (track.mode==2)
-					CD_M2=true;
-				if (track.mode==1)
-					CD_M1=true;
-				if (track.mode==0)
-					CD_DA=true;
+					if (!CDI_read_track (fsource, &image, &track))
+						throw FlycastException(i18n::Ts("Invalid CDI image"));
 
+					if (track.sector_size != 2048 && track.sector_size != 2336 && track.sector_size != 2352 && track.sector_size != 2448)
+					{
+						WARN_LOG(GDROM, "Invalid sector size: %lu", track.sector_size);
+						throw FlycastException(i18n::Ts("Invalid CDI sector size"));
+					}
 
+					image.header_position = fsource->tell();
 
-				t.ADDR=1;//hmm is that ok ?
+					// Show info
+#if 0
+					printf("Saving  ");
+					printf("Track: %2d  ",track.global_current_track);
+					printf("Type: ");
+					switch(track.mode)
+					{
+					case 0 : printf("Audio/"); break;
+					case 1 : printf("Mode1/"); break;
+					case 2 :
+					default: printf("Mode2/"); break;
+					}
+					printf("%lu  ",track.sector_size);
 
-				t.CTRL=track.mode==0?0:4;
-				t.StartFAD=track.start_lba+track.pregap_length;
-				t.EndFAD=t.StartFAD+track.length-1;
-				t.file = new RawTrackFile(fopen(file,"rb"),track.position + track.pregap_length * track.sector_size,t.StartFAD,track.sector_size);
+					printf("Pregap: %-3ld  ",track.pregap_length);
+					printf("Size: %-6ld  ",track.length);
+					printf("LBA: %-6ld  ",track.start_lba);
+#endif
+					if (ft)
+					{
+						ft = false;
+						Session s;
+						s.StartFAD = track.pregap_length + track.start_lba;
+						s.FirstTrack = (u8)track.global_current_track;
+						rv->sessions.push_back(s);
+					}
 
-				rv->tracks.push_back(t);
+					Track t;
+					if (track.mode==2)
+						CD_M2=true;
+					if (track.mode==1)
+						CD_M1=true;
+					if (track.mode==0)
+						CD_DA=true;
 
-				 printf("\n");
+					t.ADR=1;//hmm is that ok ?
 
-				//       if (track.pregap_length != 150) printf("Warning! This track seems to have a non-standard pregap...\n");
+					t.CTRL=track.mode==0?0:4;
+					t.StartFAD=track.start_lba+track.pregap_length;
+					t.EndFAD=t.StartFAD+track.length-1;
+					hostfs::File *trackFile = hostfs::storage().openFile(file, "rb");
+					if (trackFile == nullptr) {
+						WARN_LOG(GDROM, "Cannot re-open file '%s' errno %d", file, errno);
+						throw FlycastException(i18n::Ts("Cannot re-open CDI file"));
+					}
+					t.file = new RawTrackFile(trackFile, track.position + track.pregap_length * track.sector_size, t.StartFAD, track.sector_size);
 
-				if (track.length < 0)
-					printf( "Negative track size found\n"
-					"You must extract image with /pregap option");
+					rv->tracks.push_back(t);
 
-				//if (!opts.showinfo)
-				{
+					if (track.length < 0)
+						WARN_LOG(GDROM, "Negative track size found. You must extract image with /pregap option");
+
+					fsource->seek(track.position, SEEK_SET);
 					if (track.total_length < track.length + track.pregap_length)
 					{
-						printf("\nThis track seems truncated. Skipping...\n");
-						fseek(fsource, track.position, SEEK_SET);
-						fseek(fsource, track.total_length, SEEK_CUR);
-						track.position = ftell(fsource);
+						WARN_LOG(GDROM, "This track seems truncated. Skipping...");
+						// FIXME that can't be right
+						fsource->seek(track.total_length, SEEK_CUR);
 					}
 					else
 					{
-						
-						printf("Track position: %d\n",track.position + track.pregap_length * track.sector_size);
-						fseek(fsource, track.position, SEEK_SET);
-						//     fseek(fsource, track->pregap_length * track->sector_size, SEEK_CUR);
-						//     fseek(fsource, track->length * track->sector_size, SEEK_CUR);
-						fseek(fsource, track.total_length * track.sector_size, SEEK_CUR);
-
-						//savetrack(fsource, &image, &track, &opts, &flags);
-						track.position = ftell(fsource);
-
-						rv->EndFAD=track.start_lba +track.total_length;
-						// Generate cuesheet entries
-
-						//if (flags.create_cuesheet && !(track.mode == 2 && flags.do_convert))  // Do not generate input if converted (obsolete)
-						//	savecuesheet(fcuesheet, &image, &track, &opts, &flags);
-
+						fsource->seek(track.total_length * track.sector_size, SEEK_CUR);
+						rv->EndFAD = track.start_lba + track.total_length - 1;
 					}
+					track.position = fsource->tell();
+
+					fsource->seek(image.header_position, SEEK_SET);
+
+					image.remaining_tracks--;
 				}
-
-				fseek(fsource, image.header_position, SEEK_SET);
-
-
-				// Close loops
-
-				image.remaining_tracks--;
 			}
 
-			//if (flags.create_cuesheet) fclose(fcuesheet);
+			CDI_skip_next_session(fsource, &image);
+
+			image.remaining_sessions--;
 		}
+		if (digest != nullptr)
+			*digest = MD5Sum().add(fsource).getDigest();
+		delete fsource;
 
-		CDI_skip_next_session (fsource, &image);
+		rv->type=GuessDiscType(CD_M1,CD_M2,CD_DA);
 
-		image.remaining_sessions--;
+		rv->LeadOut.StartFAD = rv->EndFAD;
+		rv->LeadOut.ADR = 1;
+		rv->LeadOut.CTRL = 4;
+
+		return rv.release();
+	} catch (...) {
+		delete fsource;
+		throw;
 	}
-
-	rv->type=GuessDiscType(CD_M1,CD_M2,CD_DA);
-
-	rv->LeadOut.StartFAD=rv->EndFAD;
-	rv->LeadOut.ADDR=0;
-	rv->LeadOut.CTRL=0;
-
-
-
-	return rv;
 }
 
-#if 0
-	SPfcToc* pstToc;
-	HMODULE pfctoc_mod=NULL;
-	pfctoc_mod=LoadLibrary("plugins\\pfctoc.dll");
-	if (pfctoc_mod==NULL)
-		pfctoc_mod=LoadLibrary("pfctoc.dll");
-	if(pfctoc_mod==NULL)
-		return false;
-
-	PfcFreeTocFP* PfcFreeToc;
-	PfcGetTocFP*  PfcGetToc;
-
-	PfcFreeToc=(PfcFreeTocFP*)GetProcAddress(pfctoc_mod,"PfcFreeToc");
-	PfcGetToc=(PfcGetTocFP*)GetProcAddress(pfctoc_mod,"PfcGetToc");
-	verify(PfcFreeToc!=NULL && PfcGetToc!=NULL);
-
-	DWORD dwSize;//
-	DWORD dwErr = PfcGetToc(file, pstToc, dwSize);
-	if (dwErr == PFCTOC_OK) 
-	{
-		rv= new CDIDisc(pstToc,file);
-	}
-
-	if (pstToc)
-		PfcFreeToc(pstToc);
-	if (pfctoc_mod)
-		FreeLibrary(pfctoc_mod);
-	pstToc=0;
-	pfctoc_mod=0;
-
-	return rv;
-#endif
