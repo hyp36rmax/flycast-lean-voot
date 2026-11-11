@@ -6,6 +6,10 @@ Flycast Lean VOOT remains a C++ source project that builds a native executable, 
 
 Source reference `e8d678072a10e767f70549e967350203f007d10c` identifies the consolidated runtime described here.
 
+![Flycast emulation, Lean source changes and hosted interfaces separated from external application responsibilities](assets/architecture/runtime-interfaces.svg)
+
+The figure groups source responsibilities rather than scheduling or dataflow order. Aspect V1 is the Solo-only transaction described by the interface header. [Figure source references](assets/VISUAL-EVIDENCE.md#vis-04-runtime-interfaces)
+
 ## Implementation map
 
 | Area | Source |

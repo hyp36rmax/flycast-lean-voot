@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="810" viewBox="0 0 720 810" role="img" aria-labelledby="title desc">
+<title id="title">NAOMI receive waiting: active cycles</title><desc id="desc">Historical R&amp;D-04A original cabinet transport. SLAVE and MASTER mean active thread cycles per sample, shown on separate labeled scales.</desc>
+<style>text{font-family:Arial,Helvetica,sans-serif;fill:#172b3a} .minor{fill:#425466} .before{fill:#425466} .after{fill:#176e56} .warning{fill:#a5411e}</style>
+<rect width="720" height="810" rx="8" fill="#fff" stroke="#c8d1d9"/>
+<text x="30" y="42" font-size="27" style="fill:#172b3a" font-weight="600" text-anchor="start">NAOMI receive waiting: active cycles</text>
+<text x="30" y="80" font-size="20" style="fill:#172b3a" font-weight="400" text-anchor="start">Historical R&amp;D-04A  •  linked original-aspect workload</text>
+<text x="30" y="108" font-size="20" style="fill:#172b3a" font-weight="400" text-anchor="start">120 warmup; 600 measured samples per cabinet.</text>
+<text x="30" y="170" font-size="22" style="fill:#172b3a" font-weight="600" text-anchor="start">SLAVE mean</text>
+<text x="30" y="198" font-size="19" style="fill:#425466" font-weight="400" text-anchor="start">active cycles/sample  •  linear axis from zero</text>
+<text x="30" y="247" font-size="21" style="fill:#172b3a" font-weight="400" text-anchor="start">Before</text>
+<rect x="145" y="223" width="390" height="30" rx="0" fill="#f2f5f7" stroke="#f2f5f7" stroke-width="2"/>
+<rect x="145" y="223" width="362.1957889333333" height="30" rx="0" fill="#425466" stroke="#425466" stroke-width="2"/>
+<text x="555" y="247" font-size="20" style="fill:#172b3a" font-weight="600" text-anchor="start">11,144,486</text>
+<text x="30" y="300" font-size="21" style="fill:#172b3a" font-weight="400" text-anchor="start">After</text>
+<rect x="145" y="276" width="390" height="30" rx="0" fill="#f2f5f7" stroke="#f2f5f7" stroke-width="2"/>
+<rect x="145" y="276" width="2.191668375" height="30" rx="0" fill="#176e56" stroke="#176e56" stroke-width="2"/>
+<text x="555" y="300" font-size="20" style="fill:#172b3a" font-weight="600" text-anchor="start">67,436</text>
+<path d="M145,323 L535,323" stroke="#91a0ad" stroke-width="2" fill="none"/>
+<path d="M145.0,323 L145.0,328" stroke="#91a0ad" stroke-width="2" fill="none"/>
+<text x="145.0" y="351" font-size="17" style="fill:#172b3a" font-weight="400" text-anchor="middle">0</text>
+<path d="M275.0,323 L275.0,328" stroke="#91a0ad" stroke-width="2" fill="none"/>
+<text x="275.0" y="351" font-size="17" style="fill:#172b3a" font-weight="400" text-anchor="middle">4M</text>
+<path d="M405.0,323 L405.0,328" stroke="#91a0ad" stroke-width="2" fill="none"/>
+<text x="405.0" y="351" font-size="17" style="fill:#172b3a" font-weight="400" text-anchor="middle">8M</text>
+<path d="M535.0,323 L535.0,328" stroke="#91a0ad" stroke-width="2" fill="none"/>
+<text x="535.0" y="351" font-size="17" style="fill:#172b3a" font-weight="400" text-anchor="middle">12M</text>
+<text x="30" y="405" font-size="22" style="fill:#172b3a" font-weight="600" text-anchor="start">MASTER mean  •  separate role and scale</text>
+<text x="30" y="433" font-size="19" style="fill:#425466" font-weight="400" text-anchor="start">active cycles/sample  •  linear axis from zero</text>
+<text x="30" y="482" font-size="21" style="fill:#172b3a" font-weight="400" text-anchor="start">Before</text>
+<rect x="145" y="458" width="390" height="30" rx="0" fill="#f2f5f7" stroke="#f2f5f7" stroke-width="2"/>
+<rect x="145" y="458" width="302.9306908333333" height="30" rx="0" fill="#425466" stroke="#425466" stroke-width="2"/>
+<text x="555" y="482" font-size="20" style="fill:#172b3a" font-weight="600" text-anchor="start">46,605</text>
+<text x="30" y="535" font-size="21" style="fill:#172b3a" font-weight="400" text-anchor="start">After</text>
+<rect x="145" y="511" width="390" height="30" rx="0" fill="#f2f5f7" stroke="#f2f5f7" stroke-width="2"/>
+<rect x="145" y="511" width="310.2072783333333" height="30" rx="0" fill="#a5411e" stroke="#a5411e" stroke-width="2"/>
+<text x="555" y="535" font-size="20" style="fill:#172b3a" font-weight="600" text-anchor="start">47,724</text>
+<path d="M145,558 L535,558" stroke="#91a0ad" stroke-width="2" fill="none"/>
+<path d="M145.0,558 L145.0,563" stroke="#91a0ad" stroke-width="2" fill="none"/>
+<text x="145.0" y="586" font-size="17" style="fill:#172b3a" font-weight="400" text-anchor="middle">0</text>
+<path d="M275.0,558 L275.0,563" stroke="#91a0ad" stroke-width="2" fill="none"/>
+<text x="275.0" y="586" font-size="17" style="fill:#172b3a" font-weight="400" text-anchor="middle">20k</text>
+<path d="M405.0,558 L405.0,563" stroke="#91a0ad" stroke-width="2" fill="none"/>
+<text x="405.0" y="586" font-size="17" style="fill:#172b3a" font-weight="400" text-anchor="middle">40k</text>
+<path d="M535.0,558 L535.0,563" stroke="#91a0ad" stroke-width="2" fill="none"/>
+<text x="535.0" y="586" font-size="17" style="fill:#172b3a" font-weight="400" text-anchor="middle">60k</text>
+<text x="30" y="654" font-size="20" style="fill:#172b3a" font-weight="400" text-anchor="start">Role workloads differ; compare before/after within each panel.</text>
+<text x="30" y="683" font-size="20" style="fill:#172b3a" font-weight="400" text-anchor="start">Active CPU cycles exclude descheduled waiting.</text>
+<text x="30" y="712" font-size="20" style="fill:#172b3a" font-weight="400" text-anchor="start">No wall-clock latency or direct gameplay FPS result.</text>
+<text x="30" y="741" font-size="20" style="fill:#172b3a" font-weight="400" text-anchor="start">Original transport study; later LAN worker not benchmarked.</text>
+<text x="30" y="770" font-size="20" style="fill:#172b3a" font-weight="400" text-anchor="start">Exact original CPU / GPU / OS linkage remains unverified.</text>
+</svg>

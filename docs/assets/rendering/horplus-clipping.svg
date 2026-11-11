@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="1190" viewBox="0 0 720 1190" role="img" aria-labelledby="title desc">
+<title id="title">Hor+ projection and clipping</title><desc id="desc">Equal-height, exact-ratio 4:3, 16:9 and 32:9 viewports. Guest submission and host clipping are separate stages.</desc>
+<style>text{font-family:Arial,Helvetica,sans-serif;fill:#172b3a} .minor{fill:#425466} .before{fill:#425466} .after{fill:#176e56} .warning{fill:#a5411e}</style>
+<rect width="720" height="1190" rx="8" fill="#fff" stroke="#c8d1d9"/>
+<text x="30" y="42" font-size="27" style="fill:#172b3a" font-weight="600" text-anchor="start">Hor+ projection and clipping</text>
+<text x="30" y="79" font-size="20" style="fill:#172b3a" font-weight="400" text-anchor="start">Equal vertical framing; added horizontal field of view.</text>
+<text x="30" y="107" font-size="20" style="fill:#172b3a" font-weight="400" text-anchor="start">Rectangles show exact aspect ratios, not gameplay captures.</text>
+<text x="30" y="144" font-size="22" style="fill:#172b3a" font-weight="600" text-anchor="start">4:3  •  original</text>
+<rect x="264.0" y="158" width="192" height="144" rx="0" fill="#e8f3f7" stroke="#17698a" stroke-width="2"/>
+<path d="M250.0,158 L470.0,158" stroke="#176e56" stroke-width="2" fill="none"/>
+<path d="M250.0,302 L470.0,302" stroke="#176e56" stroke-width="2" fill="none"/>
+<text x="360" y="332" font-size="20" style="fill:#172b3a" font-weight="400" text-anchor="middle">No additional horizontal extent</text>
+<text x="30" y="356" font-size="22" style="fill:#172b3a" font-weight="600" text-anchor="start">16:9  •  Hor+</text>
+<rect x="232.0" y="370" width="256" height="144" rx="0" fill="#e8f3f7" stroke="#17698a" stroke-width="2"/>
+<rect x="264" y="370" width="192" height="144" rx="0" fill="#fff" stroke="#425466" stroke-width="2" stroke-dasharray="7 5"/>
+<path d="M218.0,370 L502.0,370" stroke="#176e56" stroke-width="2" fill="none"/>
+<path d="M218.0,514 L502.0,514" stroke="#176e56" stroke-width="2" fill="none"/>
+<text x="360" y="544" font-size="20" style="fill:#172b3a" font-weight="400" text-anchor="middle">4/3 of the original horizontal span</text>
+<text x="30" y="568" font-size="22" style="fill:#172b3a" font-weight="600" text-anchor="start">32:9  •  Hor+</text>
+<rect x="104.0" y="582" width="512" height="144" rx="0" fill="#e8f3f7" stroke="#17698a" stroke-width="2"/>
+<rect x="264" y="582" width="192" height="144" rx="0" fill="#fff" stroke="#425466" stroke-width="2" stroke-dasharray="7 5"/>
+<path d="M90.0,582 L630.0,582" stroke="#176e56" stroke-width="2" fill="none"/>
+<path d="M90.0,726 L630.0,726" stroke="#176e56" stroke-width="2" fill="none"/>
+<text x="360" y="756" font-size="20" style="fill:#172b3a" font-weight="400" text-anchor="middle">8/3 of the original horizontal span</text>
+<text x="30" y="795" font-size="20" style="fill:#172b3a" font-weight="400" text-anchor="start">Dashed: original horizontal span. Green: vertical limits.</text>
+<text x="30" y="823" font-size="20" style="fill:#172b3a" font-weight="400" text-anchor="start">Blue sides: wider projection / eligible horizontal clip.</text>
+<text x="30" y="851" font-size="20" style="fill:#172b3a" font-weight="400" text-anchor="start">Projection width = original width × aspect / (4/3).</text>
+<rect x="30" y="886" width="660" height="70" rx="4" fill="#f4f7f9" stroke="#425466" stroke-width="2"/>
+<text x="48" y="914" font-size="22" style="fill:#172b3a" font-weight="600" text-anchor="start">1  Guest SH-4 visibility decision</text>
+<text x="48" y="940" font-size="19" style="fill:#172b3a" font-weight="400" text-anchor="start">Guarded VOOT limit-load correction → geometry submission</text>
+<path d="M360,958 L360,979" stroke="#425466" stroke-width="2" fill="none"/>
+<polyline points="355,971 360,979 365,971" stroke="#425466" stroke-width="2" fill="none"/>
+<rect x="30" y="983" width="660" height="70" rx="4" fill="#e8f3f7" stroke="#17698a" stroke-width="2"/>
+<text x="48" y="1011" font-size="22" style="fill:#172b3a" font-weight="600" text-anchor="start">2  Host projection and PowerVR tile clipping</text>
+<text x="48" y="1037" font-size="19" style="fill:#172b3a" font-weight="400" text-anchor="start">Eligible full-width clip widens; vertical bounds remain.</text>
+<text x="30" y="1090" font-size="19" style="fill:#172b3a" font-weight="400" text-anchor="start">Partial-width, inverse and render-to-texture clips stay guarded.</text>
+<text x="30" y="1119" font-size="19" style="fill:#172b3a" font-weight="400" text-anchor="start">A wider viewport cannot recover geometry the guest omitted.</text>
+<text x="30" y="1148" font-size="19" style="fill:#172b3a" font-weight="400" text-anchor="start">Source: transform_matrix.cpp, rec_x64.cpp; clip fixtures.</text>
+</svg>
