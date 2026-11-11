@@ -97,3 +97,18 @@ $ make
 ## Packaging status
 
 [![Packaging status](https://repology.org/badge/vertical-allrepos/flycast.svg)](https://repology.org/project/flycast/versions)
+
+## Flycast Lean VOOT development documentation
+
+This repository maintains a VOOT-focused Flycast runtime and its external integration interfaces. The technical review draft is organized below.
+
+- [Engineering and runtime profiles](docs/ENGINEERING.md)
+- [Rendering and visibility](docs/rendering/RENDERING.md)
+- [Performance evidence](docs/performance/PERFORMANCE.md)
+- [Hardware and validation platform](docs/hardware/VALIDATION-PLATFORM.md)
+- [Attribution and licensing](docs/LICENSING.md)
+- [Changelog](CHANGELOG.md) and [development history](DEVELOPMENT_HISTORY_V1.0.md)
+- [Documentation import status](docs/DOCUMENTATION-STATUS.md)
+- [Visual asset checklist](docs/assets/ASSET-CHECKLIST.md)
+
+The full approved Flycast Lean VOOT introduction is pending import. This navigation accompanies the technical draft while that original text is recovered.
