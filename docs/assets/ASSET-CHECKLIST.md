@@ -1,6 +1,6 @@
-# Visual asset review checklist
+# Maintainer visual asset checklist
 
-This is an asset plan. Final graphics and gameplay images await separate maintainer review.
+This is internal maintainer planning material. Final graphics and gameplay images await separate maintainer review.
 
 | ID | Proposed asset | Recommended path | Available evidence | Review needed |
 | --- | --- | --- | --- | --- |

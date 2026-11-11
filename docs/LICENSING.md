@@ -1,8 +1,8 @@
 # Attribution and licensing review
 
-Flycast Lean VOOT retains Flycast history and source attribution. The upstream README identifies Flycast's reicast lineage. Runtime headers state the GNU General Public License, version 2 or later. The original GPL text and per-file notices are retained. [Upstream introduction](../README.md) · [GPL text](../LICENSE) · [Representative source notice](../core/network/naomi_network.cpp#L1)
+Flycast Lean VOOT retains Flycast history and source attribution. The upstream README identifies Flycast's reicast lineage. Runtime headers state the GNU General Public License, version 2 or later. The original GPL text and per-file notices are retained. [Upstream reference](upstream/README.md), [GPL text](../LICENSE), [representative source notice](../core/network/naomi_network.cpp#L1)
 
-Third-party dependencies retain their own source and licenses. The [submodule manifest](../.gitmodules) identifies their repositories. Offline source recovery is described in the [engineering note](engineering/FLV-GIT01-Consolidation.md#windows-builds).
+Third-party dependencies retain their own source and licenses. The [submodule manifest](../.gitmodules) identifies their repositories. Current runtime profiles are described in [Engineering](ENGINEERING.md#runtime-profiles). Offline source recovery is described in the [retained build recipe](engineering/FLV-GIT01-Consolidation.md#windows-builds).
 
 ## Review before distribution
 

@@ -1,114 +1,120 @@
-# Flycast
+# Flycast Lean VOOT
 
-[![Android CI](https://github.com/flyinghead/flycast/actions/workflows/android.yml/badge.svg)](https://github.com/flyinghead/flycast/actions/workflows/android.yml)
-[![C/C++ CI](https://github.com/flyinghead/flycast/actions/workflows/c-cpp.yml/badge.svg)](https://github.com/flyinghead/flycast/actions/workflows/c-cpp.yml)
-[![Nintendo Switch CI](https://github.com/flyinghead/flycast/actions/workflows/switch.yml/badge.svg)](https://github.com/flyinghead/flycast/actions/workflows/switch.yml)
-[![Windows UWP CI](https://github.com/flyinghead/flycast/actions/workflows/uwp.yml/badge.svg)](https://github.com/flyinghead/flycast/actions/workflows/uwp.yml)
-[![BSD CI](https://github.com/flyinghead/flycast/actions/workflows/bsd.yml/badge.svg)](https://github.com/flyinghead/flycast/actions/workflows/bsd.yml)
+### A dedicated Flycast runtime for Virtual-On: Oratorio Tangram M.S.B.S. Ver. 5.66
 
-<img src="shell/linux/flycast.png" alt="flycast logo" width="150"/>
+**Preserving the original NAOMI arcade experience while bringing its presentation and performance forward on modern PC hardware.**
 
-**Flycast** is a multi-platform Sega Dreamcast, Naomi, Naomi 2, and Atomiswave emulator derived from [**reicast**](https://github.com/skmp/reicast-emulator).
+## About the Project
 
-Information about configuration and supported features can be found on [**TheArcadeStriker's flycast wiki**](https://github.com/TheArcadeStriker/flycast-wiki/wiki).
+*Virtual-On: Oratorio Tangram* remains one of SEGA's most distinctive arcade experiences. Its fast-paced combat, precise Twin-Stick controls, and linked cabinet battles helped define what made the original game special.
 
-Join us on our [**Discord server**](https://discord.gg/X8YWP8w) for a chat.
+Despite several console releases, preserving the original NAOMI 5.66 experience on modern hardware presents its own challenges, particularly when it comes to display compatibility, performance, and linked multiplayer.
 
-## Downloads ![android](https://flyinghead.github.io/flycast-builds/android.jpg) ![windows](https://flyinghead.github.io/flycast-builds/windows.png) ![linux](https://flyinghead.github.io/flycast-builds/ubuntu.png) ![apple](https://flyinghead.github.io/flycast-builds/apple.png) ![switch](https://flyinghead.github.io/flycast-builds/switch.png) ![xbox](https://flyinghead.github.io/flycast-builds/xbox.png)
+Flycast already provides a strong foundation for running the original arcade software. Rather than recreating the game or developing another emulator from scratch, this project builds upon that foundation with targeted improvements focused on *Oratorio Tangram*.
 
-Get builds for your system from the [**builds page**](https://flyinghead.github.io/flycast-builds/) or [**GitHub Releases**](https://github.com/flyinghead/flycast/releases).
+The initial goal was straightforward: establish a reliable, lightweight runtime that preserves the original game while removing unnecessary overhead.
 
-- **Latest master builds:** regular builds from the `master` branch with recent fixes and updates.
-- **Nightly dev builds:** experimental builds with the latest features and changes.
-- **Stable tagged releases:** versioned release builds published on GitHub Releases.
+As development progressed, the work expanded into areas that required deeper investigation of the original NAOMI hardware behavior and Flycast's execution pipeline.
 
-Automated test results are available from the builds page as well.
+## Beyond a Lightweight Runtime
 
-## Install
+Flycast Lean VOOT is more than a stripped-down emulator build.
 
-### Android ![android](https://flyinghead.github.io/flycast-builds/android.jpg)
+The project introduces source-level improvements to Flycast's existing architecture, focusing on areas where the original game's assumptions and modern PC hardware don't always align.
 
-Install Flycast from [**Google Play**](https://play.google.com/store/apps/details?id=com.flycast.emulator).
+One of the largest efforts has been modern display support.
 
-### Flatpak (Linux ![ubuntu logo](https://flyinghead.github.io/flycast-builds/ubuntu.png))
+Simply increasing rendering resolution or stretching the original 4:3 picture isn't enough to provide proper widescreen gameplay. Achieving genuine horizontal expansion required investigating how VOOT submits geometry, how Flycast handles PowerVR clipping and projection, and how the original game determines which objects remain visible.
 
-1. [Set up Flatpak](https://www.flatpak.org/setup/).
+These investigations led to targeted corrections that allow the game world to expand horizontally while retaining the original vertical framing and preserving the underlying gameplay.
 
-2. Install Flycast from [Flathub](https://flathub.org/apps/details/org.flycast.Flycast):
+Additional work focuses on SH-4 execution efficiency, rendering performance, cabinet communications, and reliable runtime integration.
 
-`flatpak install -y org.flycast.Flycast`
+The objective isn't to change how *Oratorio Tangram* plays. It's to address the technical limitations surrounding how the original software runs and appears today.
 
-3. Run Flycast:
+## Development Philosophy
 
-`flatpak run org.flycast.Flycast`
+The original NAOMI 5.66 release remains our reference.
 
-### Homebrew (macOS ![apple logo](https://flyinghead.github.io/flycast-builds/apple.png))
+Gameplay mechanics, movement, weapons, timing, and arcade behavior should remain faithful to the source material. Improvements must be measurable, reproducible, and validated against that baseline.
 
-1. [Set up Homebrew](https://brew.sh).
+Not every experiment becomes a permanent improvement. Some investigations expose limitations, others require a different approach, and occasionally the original behavior proves to be the better choice.
 
-2. Install Flycast via Homebrew:
+Those findings are worth preserving alongside the successful changes.
 
-`brew install --cask flycast`
+Development documentation covers the technical decisions, implementation details, measured results, and known limitations so other developers can understand the work and build upon it.
 
-### iOS
+## Part of PROJECT OT
 
-Due to persistent harassment from an iOS user, support for this platform has been dropped.
+Flycast Lean VOOT began as the dedicated execution runtime for **PROJECT OT: Virtual On Experience**, a separate fan-created project focused on bringing the original arcade experience to modern Windows systems.
 
-### Xbox One/Series ![xbox logo](https://flyinghead.github.io/flycast-builds/xbox.png)
+PROJECT OT provides the surrounding player experience, including controller management, display configuration, audio, session coordination, and multiplayer presentation.
 
-Grab the latest build from [**the builds page**](https://flyinghead.github.io/flycast-builds/), or the [**GitHub Actions**](https://github.com/flyinghead/flycast/actions/workflows/uwp.yml). Then install it using the **Xbox Device Portal**.
+Flycast Lean VOOT focuses on executing the original NAOMI software.
 
-## Build from source
+Keeping these responsibilities separate allows the runtime to remain independently maintained and documented while supporting integration with the broader PROJECT OT framework.
 
-### macOS
+## Open Development and Preservation
 
-Right-click the bootstrap script and choose **Open**:
+Flycast Lean VOOT is derived from the open-source Flycast project and retains its applicable GPL licensing obligations.
 
-`shell/apple/generate_xcode_project.command`
+The repository documents our modifications alongside the original upstream foundation, with appropriate attribution to Flycast's developers and the research that helped inform this work.
 
-### Windows
+No commercial game ROMs, NAOMI BIOS files, or proprietary SEGA assets are included.
 
-Double-click the bootstrap script:
+**Preserve the game. Improve the experience.**
 
-`shell\windows\generate_vs_project.bat`
+## Technical Improvements
 
-### Linux
+Getting the original game running gave us a baseline. The work that followed focused on the points where its arcade assumptions meet Flycast's rendering, execution and communication paths.
 
-#### Dependencies
+| Area | Work retained in the runtime | Details |
+| --- | --- | --- |
+| PowerVR and DX11 | Cached state selection, presentation queue request, stable depth sorting and palette conversion | [Rendering](docs/rendering/RENDERING.md#dx11-and-powervr) |
+| Hor+ presentation | Render-target-aware projection and guarded horizontal tile clipping | [Projection and clipping](docs/rendering/RENDERING.md#hor-projection-and-clipping) |
+| VOOT visibility | A narrowly matched correction for horizontal bounds in Flycast's dynamic SH-4 execution path | [Visibility investigation](docs/rendering/RENDERING.md#voot-horizontal-visibility) |
+| SH-4 execution | Direct MMU-off block lookup with the existing MMU-enabled fallback | [Execution study](docs/performance/PERFORMANCE.md#sh-4-block-dispatch) |
+| Cabinet communication | Windows readiness waiting and separate Solo/Local and LAN configurations | [Runtime profiles](docs/ENGINEERING.md#runtime-profiles) |
 
-- **C/C++ compiler toolchain** (e.g. `gcc`/`g++`)
-- **CMake**
-- **make**
-- **libcurl** (development headers)
-- **libudev** (development headers)
-- **SDL2** (development headers)
-- **Graphics API**: Vulkan, OpenGL
+## Performance and Validation
 
-#### Build
+Focused measurements helped us decide which changes were worth keeping. Their workloads, sample counts and counterexamples are recorded in the [performance notes](docs/performance/PERFORMANCE.md). Those studies measure particular host costs; the consolidated source still needs its own performance characterization.
 
-```
-$ git clone --recursive https://github.com/flyinghead/flycast.git
-$ cd flycast
-$ mkdir build && cd build
-$ cmake ..
-$ make
-```
+Both Windows x64 Release profiles built from a clean source checkout. Focused rendering, host, transport and actual runtime startup/shutdown checks passed at source checkpoint `e8d678072a10`. Full physical gameplay and sustained cross-PC LAN qualification remain open for that revision. [Validation scope](docs/ENGINEERING.md#validation-scope)
 
-## Packaging status
+## Building Flycast Lean VOOT
 
-[![Packaging status](https://repology.org/badge/vertical-allrepos/flycast.svg)](https://repology.org/project/flycast/versions)
+The runtime builds as a native executable, `flycast.exe`. Our validated development configuration uses Windows x64, DX11, Lean mode and hosted startup. The [build recipe](docs/engineering/FLV-GIT01-Consolidation.md#windows-builds) records the toolchain, dependency recovery and complete CMake flags.
 
-## Flycast Lean VOOT development documentation
+Use `FLYCAST_OT_LAN_TRANSPORT=OFF` for Solo/Local and `ON` for the preserved LAN transport. An external host supplies the supported runtime configuration and manages the processes. Lean mode currently excludes artwork and scraping; complete frontend exclusion remains an open qualification. [Architecture and integration](docs/ENGINEERING.md)
 
-This repository maintains a VOOT-focused Flycast runtime and its external integration interfaces. The technical review draft is organized below.
+## Development History
 
-- [Engineering and runtime profiles](docs/ENGINEERING.md)
-- [Rendering and visibility](docs/rendering/RENDERING.md)
-- [Performance evidence](docs/performance/PERFORMANCE.md)
+The [source-history index](DEVELOPMENT_HISTORY_V1.0.md) follows the upstream foundation, retained improvements and recovery checkpoints. The full approved Development History V1.0 narrative is still pending import. Its existing verified content remains available while that original draft is recovered.
+
+## Documentation
+
+- [Engineering and runtime interfaces](docs/ENGINEERING.md)
+- [Rendering, projection and visibility](docs/rendering/RENDERING.md)
+- [Performance studies and limitations](docs/performance/PERFORMANCE.md)
 - [Hardware and validation platform](docs/hardware/VALIDATION-PLATFORM.md)
-- [Attribution and licensing](docs/LICENSING.md)
-- [Changelog](CHANGELOG.md) and [development history](DEVELOPMENT_HISTORY_V1.0.md)
-- [Documentation import status](docs/DOCUMENTATION-STATUS.md)
-- [Visual asset checklist](docs/assets/ASSET-CHECKLIST.md)
+- [Changelog](CHANGELOG.md)
 
-The full approved Flycast Lean VOOT introduction is pending import. This navigation accompanies the technical draft while that original text is recovered.
+### Maintainer review material
+
+- [Editorial imports and review status](docs/DOCUMENTATION-STATUS.md)
+- [Visual asset planning checklist](docs/assets/ASSET-CHECKLIST.md)
+
+## Credits and Acknowledgments
+
+Flycast Lean VOOT builds on [Flycast](https://github.com/flyinghead/flycast), maintained by flyinghead and its contributors, and Flycast's [reicast](https://github.com/skmp/reicast-emulator) foundation. Their emulation work, source history and attribution remain part of this project.
+
+The runtime also retains its third-party dependency sources and notices. The engineering documents link our changes to the actual implementation and the records used to evaluate them.
+
+## Licensing and Legal
+
+Flycast-derived source retains the applicable GPL notices and the original [license text](LICENSE). Dependencies and other assets retain their own licensing requirements. The [licensing review](docs/LICENSING.md) records the remaining corresponding-source, notices, recipient-access and asset-rights checks before distribution.
+
+## Upstream Flycast Reference
+
+The [upstream reference page](docs/upstream/README.md) retains Flycast's original build badges, download links and platform instructions. Those belong to upstream Flycast. The Flycast Lean VOOT configuration and validation scope are documented above.

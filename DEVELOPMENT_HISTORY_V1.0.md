@@ -21,3 +21,19 @@ Rendering/performance studies also used isolated snapshots. Their manifests dist
 The `backup/project-ot-golden` branch retains the selected runtime source, divergent history and offline dependencies. Its [manifest](https://github.com/hyp36rmax/flycast-lean-voot/blob/backup/project-ot-golden/recovery/manifest.json) records original identities and separately retained in-progress runtime work.
 
 The five earlier preservation branches remain available. Their retirement requires maintainer approval. Existing technical records describe their own historical checkpoints.
+
+## Approved narrative import
+
+The full frozen Development History V1.0 draft remains unavailable. The verified source index and recovery text above are retained. This checklist reserves the missing narrative for import from that original draft.
+
+| Narrative section | Existing verified material | Import status |
+| --- | --- | --- |
+| Why the project started and why Flycast was chosen | [Approved README introduction](README.md#about-the-project) and upstream source identity | Pending approved historical narrative |
+| Establishing the Lean runtime | Lean source checkpoint in the index | Pending approved historical narrative |
+| PowerVR projection and clipping investigation | [Rendering record](docs/rendering/RENDERING.md#hor-projection-and-clipping) | Pending approved historical narrative |
+| VOOT visibility and recovered submitted geometry | [Visibility record](docs/rendering/RENDERING.md#voot-horizontal-visibility) | Pending approved historical narrative |
+| SH-4 execution and rendering performance | [Retained studies](docs/performance/PERFORMANCE.md) | Pending approved historical narrative |
+| NAOMI cabinet communication | [Communication record](docs/ENGINEERING.md#cabinet-communication) | Pending approved historical narrative |
+| Solo, Local VS and LAN preservation | Variant checkpoints and recovery manifest above | Pending approved historical narrative |
+| Unsuccessful experiments and lessons | [Recorded rejected work](docs/performance/PERFORMANCE.md#limits-and-rejected-work) | Pending approved historical narrative |
+| Consolidation, source recovery and reproducibility | Consolidation checkpoint and recovery manifest above; frozen-binary equivalence remains unresolved | Pending approved historical narrative |

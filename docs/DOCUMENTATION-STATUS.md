@@ -1,28 +1,30 @@
-# Documentation review status
+# Maintainer documentation review
 
-## Approved editorial source
+This is the internal import and editorial review record. Reader-facing implementation notes begin in [Engineering](ENGINEERING.md).
 
-The full frozen Flycast Lean VOOT README introduction is PENDING IMPORT. The brief supplies its title, subtitle, five section names and closing line, but the complete intervening text was not recovered from accessible records.
+## Approved README introduction
 
-The README's original text is preserved. Its appended navigation points to this technical draft. The approved introduction will be imported verbatim when its verified source is available.
+The full introduction supplied for FLV-DOC01-A2 is imported verbatim at the beginning of the README. Its title, subtitle, five sections and closing line are preserved. Further publication edits remain with the maintainer.
 
 | Document | Available material | Review status |
 | --- | --- | --- |
-| README introduction | Upstream-derived text; frozen endpoints and section names | Full approved introduction pending import |
-| Engineering | Existing recovery notes and current source | Technical draft available; approved overview pending import |
-| Rendering | Matrix, clipping, DX11 and visibility source; historical findings | Technical draft available; approved directory manifest/text pending import |
-| Performance | Retained study summaries/manifests | Reviewed extract available; approved editorial set pending import |
-| Hardware | Verified build recipe; incomplete device linkage | Scope note available; approved hardware material pending import |
-| Changelog | Verified Git checkpoints | Milestone draft available; approved wording pending import |
-| Development history V1.0 | Verified lineage and snapshot records | Source-history draft available; approved narrative pending import |
-| Credits and assets | Existing upstream attribution/notices | Approved credits and linked asset manifest pending import |
+| README introduction | Complete maintainer-supplied frozen text | Exact import verified |
+| Engineering | Existing recovery notes and source references | Editorially aligned; final maintainer review |
+| Rendering | Matrix, clipping, DX11 and guarded visibility source; historical findings | Editorially aligned; broader rendering qualification remains open |
+| Performance | Retained study values, workloads, counters and manifests | Editorially aligned; hardware linkage and consolidated-source performance characterization remain open |
+| Hardware | Verified build recipe; incomplete device linkage | Concise scope note retained |
+| Changelog | Verified Git checkpoints | Source milestone index retained; approved V1.0 wording remains pending import |
+| Development history V1.0 | Verified index and recovery records | Full frozen narrative blocked on original draft; import checklist added |
+| Credits and assets | Existing upstream attribution and notices | Final credit, asset-rights and publication review remains open |
 
 ## Historical and current notes
 
 The [P0 backup record](P0-GIT-01-Source-Backup.txt), [GOLD01 note](engineering/GOLD01-RUNTIME-SOURCE.md) and [November 10 variant note](engineering/GIT-BACKUP01-Development-Source.md) preserve their original recovery context. Their build instructions belong to those checkpoints.
 
-The [consolidation note](engineering/FLV-GIT01-Consolidation.md) records the current selector and build recipe. The new [engineering index](ENGINEERING.md) connects it to rendering, performance, hardware, licensing and visual review.
+The [consolidation note](engineering/FLV-GIT01-Consolidation.md) records the current selector and build recipe. [Engineering](ENGINEERING.md) connects that record to the rendering, performance, hardware and licensing documents. Original upstream badges, downloads and platform instructions are kept in the labeled [upstream reference](upstream/README.md).
 
-## Next review
+## Remaining review
 
-Recover the verified approved export, reconcile exact filenames/text, and apply the maintainer's planned editorial changes through the documentation pull request. Visual assets have a separate [review checklist](assets/ASSET-CHECKLIST.md).
+Recover the full approved Development History V1.0 draft and any remaining approved document/asset manifests. Apply the maintainer's planned publication edits through PR #1. The [asset checklist](assets/ASSET-CHECKLIST.md) tracks separate visual review.
+
+Editorial checks and rendered Markdown validation are separate from the [distribution licensing review](LICENSING.md#review-before-distribution).
