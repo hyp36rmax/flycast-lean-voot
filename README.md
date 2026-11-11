@@ -64,6 +64,57 @@ No commercial game ROMs, NAOMI BIOS files, or proprietary SEGA assets are includ
 
 **Preserve the game. Improve the experience.**
 
-## Upstream Flycast
+## Technical Improvements
 
-This project is derived from [Flycast](https://github.com/flyinghead/flycast). The unmodified source reference is retained on the [`upstream`](https://github.com/hyp36rmax/flycast-lean-voot/tree/upstream) branch. Technical documentation and additional repository navigation are being reviewed in [draft PR #1](https://github.com/hyp36rmax/flycast-lean-voot/pull/1).
+Getting the original game running gave us a baseline. The work that followed focused on the points where its arcade assumptions meet Flycast's rendering, execution and communication paths.
+
+| Area | Work retained in the runtime | Details |
+| --- | --- | --- |
+| PowerVR and DX11 | Cached state selection, presentation queue request, stable depth sorting and palette conversion | [Rendering](docs/rendering/RENDERING.md#dx11-and-powervr) |
+| Hor+ presentation | Render-target-aware projection and guarded horizontal tile clipping | [Projection and clipping](docs/rendering/RENDERING.md#hor-projection-and-clipping) |
+| VOOT visibility | A narrowly matched correction for horizontal bounds in Flycast's dynamic SH-4 execution path | [Visibility investigation](docs/rendering/RENDERING.md#voot-horizontal-visibility) |
+| SH-4 execution | Direct MMU-off block lookup with the existing MMU-enabled fallback | [Execution study](docs/performance/PERFORMANCE.md#sh-4-block-dispatch) |
+| Cabinet communication | Windows readiness waiting and separate Solo/Local and LAN configurations | [Runtime profiles](docs/ENGINEERING.md#runtime-profiles) |
+
+## Performance and Validation
+
+Focused measurements helped us decide which changes were worth keeping. Their workloads, sample counts and counterexamples are recorded in the [performance notes](docs/performance/PERFORMANCE.md). Those studies measure particular host costs; the consolidated source still needs its own performance characterization.
+
+Both Windows x64 Release profiles built from a clean source checkout. Focused rendering, host, transport and actual runtime startup/shutdown checks passed at source checkpoint `e8d678072a10`. Full physical gameplay and sustained cross-PC LAN qualification remain open for that revision. [Validation scope](docs/ENGINEERING.md#validation-scope)
+
+## Building Flycast Lean VOOT
+
+The runtime builds as a native executable, `flycast.exe`. Our validated development configuration uses Windows x64, DX11, Lean mode and hosted startup. The [build recipe](docs/engineering/FLV-GIT01-Consolidation.md#windows-builds) records the toolchain, dependency recovery and complete CMake flags.
+
+Use `FLYCAST_OT_LAN_TRANSPORT=OFF` for Solo/Local and `ON` for the preserved LAN transport. An external host supplies the supported runtime configuration and manages the processes. Lean mode currently excludes artwork and scraping; complete frontend exclusion remains an open qualification. [Architecture and integration](docs/ENGINEERING.md)
+
+## Development History
+
+The [source-history index](DEVELOPMENT_HISTORY_V1.0.md) follows the upstream foundation, retained improvements and recovery checkpoints. The full approved Development History V1.0 narrative is still pending import. Its existing verified content remains available while that original draft is recovered.
+
+## Documentation
+
+- [Engineering and runtime interfaces](docs/ENGINEERING.md)
+- [Rendering, projection and visibility](docs/rendering/RENDERING.md)
+- [Performance studies and limitations](docs/performance/PERFORMANCE.md)
+- [Hardware and validation platform](docs/hardware/VALIDATION-PLATFORM.md)
+- [Changelog](CHANGELOG.md)
+
+### Maintainer review material
+
+- [Editorial imports and review status](docs/DOCUMENTATION-STATUS.md)
+- [Visual asset planning checklist](docs/assets/ASSET-CHECKLIST.md)
+
+## Credits and Acknowledgments
+
+Flycast Lean VOOT builds on [Flycast](https://github.com/flyinghead/flycast), maintained by flyinghead and its contributors, and Flycast's [reicast](https://github.com/skmp/reicast-emulator) foundation. Their emulation work, source history and attribution remain part of this project.
+
+The runtime also retains its third-party dependency sources and notices. The engineering documents link our changes to the actual implementation and the records used to evaluate them.
+
+## Licensing and Legal
+
+Flycast-derived source retains the applicable GPL notices and the original [license text](LICENSE). Dependencies and other assets retain their own licensing requirements. The [licensing review](docs/LICENSING.md) records the remaining corresponding-source, notices, recipient-access and asset-rights checks before distribution.
+
+## Upstream Flycast Reference
+
+The [upstream reference page](docs/upstream/README.md) retains Flycast's original build badges, download links and platform instructions. Those belong to upstream Flycast. The Flycast Lean VOOT configuration and validation scope are documented above.

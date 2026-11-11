@@ -1,0 +1,116 @@
+{
+  "schemaVersion": 1,
+  "scope": "Historical studies; consolidated main has not been benchmarked by these records.",
+  "hardwareIdentity": "Exact original CPU, GPU and Windows OS build linkage remains unverified.",
+  "studies": [
+    {
+      "id": "RD03D",
+      "change": "Palette lookup base retained per conversion",
+      "workload": "Saved Solo battle at 3840x1080, controls released; A/B/B/A, 120 warmup frames per run, 1200 measured frames per variant.",
+      "metric": "TA parser wall time",
+      "unit": "microseconds/frame",
+      "before": {
+        "mean": 854.2554166666666,
+        "p95": 1159.4,
+        "p99": 1302.1
+      },
+      "after": {
+        "mean": 788.9633333333334,
+        "p95": 1084.4,
+        "p99": 1263.4
+      },
+      "source": "core/rend/texconv.cpp",
+      "implementationPresent": true,
+      "records": [
+        {
+          "id": "RD03D-pooled-performance",
+          "sha256": "7b2994c1f3970f4e04f38cfc5643856211322e0cc33ff3512758a9488e5e883c"
+        },
+        {
+          "id": "RD03D-report",
+          "sha256": "03127684ddbc1f52190a1e4e3a718db6325985be48378f779b7de2bf561200f2"
+        },
+        {
+          "id": "RD03D-source-manifest",
+          "sha256": "be85e4d0342463d2c327c229addb14af0293a9fcbe24181141d858798a95771f"
+        }
+      ]
+    },
+    {
+      "id": "RD03E",
+      "change": "Inline MMU-off x64 block lookup",
+      "workload": "Matched saved Solo battle at 3840x1080; 120 warmup and 600 measured frames per variant.",
+      "metric": "Emulation thread cycles",
+      "unit": "cycles/frame",
+      "before": {
+        "mean": 18121265.823333334,
+        "p95": 24505359.0,
+        "p99": 28373839.0
+      },
+      "after": {
+        "mean": 16789886.096666668,
+        "p95": 22966180.0,
+        "p99": 26346604.0
+      },
+      "processMeanBefore": 25121222.36,
+      "processMeanAfter": 24004623.868333332,
+      "renderStartP99BeforeMicroseconds": 23992.4,
+      "renderStartP99AfterMicroseconds": 25856.1,
+      "source": "core/rec-x64/rec_x64.cpp",
+      "implementationPresent": true,
+      "records": [
+        {
+          "id": "RD03E-performance-summary",
+          "sha256": "dceff6ebdae5b24e7809922092614e41743c3ee1e58c820de2a67902a61e49ec"
+        },
+        {
+          "id": "RD03E-report",
+          "sha256": "8330fa00f3e4a871faebbce2022ecf6ced854e215faf3692977cd14325d6ebdc"
+        },
+        {
+          "id": "RD03E-source-manifest",
+          "sha256": "45a70056ab935fba667614a8dc7e4193b4f99bf92693b7e24d5b26b28d102064"
+        }
+      ]
+    },
+    {
+      "id": "RD04A",
+      "change": "Windows socket readiness wait",
+      "workload": "Linked original-aspect run; 120 warmup and 600 measured samples per cabinet.",
+      "metric": "SLAVE link active thread cycles",
+      "unit": "cycles/sample",
+      "before": {
+        "mean": 11144485.813333333,
+        "p50": 45480.0,
+        "p95": 57992599.0,
+        "p99": 59946187.0,
+        "maximum": 470720645.0
+      },
+      "after": {
+        "mean": 67435.95,
+        "p50": 50231.0,
+        "p95": 173094.0,
+        "p99": 204319.0,
+        "maximum": 211785.0
+      },
+      "masterMeanBefore": 46604.721666666665,
+      "masterMeanAfter": 47724.19666666666,
+      "source": "core/network/naomi_network.cpp",
+      "implementationPresent": true,
+      "records": [
+        {
+          "id": "RD04A-capture-summary",
+          "sha256": "934e1416ae4545b8ce325e9d9cb49feb27b5266c8ad54f4ce123985a0182cad3"
+        },
+        {
+          "id": "RD04A-report",
+          "sha256": "c9e435a7cfa2c3a78cab90dc188b1e104dedc53a372faa252d97f05afc477457"
+        },
+        {
+          "id": "RD04A-source-manifest",
+          "sha256": "de05626dcb0b59f1994df39f6dc58148f785615931430faeec5a567615b08cd1"
+        }
+      ]
+    }
+  ]
+}
