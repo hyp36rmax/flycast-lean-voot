@@ -1,0 +1,12 @@
+{
+  "refs/archive/local-tags/r7-rc1": {
+    "sha": "09a2b62bb2ff4e95927a1eb0cfd575d99fc2e415",
+    "rawObjectPath": "recovery/tag-objects/09a2b62bb2ff4e95927a1eb0cfd575d99fc2e415.tag",
+    "rawSha256": "2c7de34e127c7e5e8dff3c35253aa7f0242223ef97c386b32ef54c4efc18c5b8"
+  },
+  "refs/tags/m08-v0.4.0-dev-baseline": {
+    "sha": "9a4d8759fb8cb2e1610b00c00417fb435ddf4326",
+    "rawObjectPath": "recovery/tag-objects/9a4d8759fb8cb2e1610b00c00417fb435ddf4326.tag",
+    "rawSha256": "d71e51975e9213a00cdfd488cd5d56109e857544bc5f3a3eb63c0d37d4d7c3a7"
+  }
+}
