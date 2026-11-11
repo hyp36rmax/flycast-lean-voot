@@ -4,7 +4,7 @@ This is internal maintainer planning material. Final graphics and gameplay image
 
 | ID | Proposed asset | Recommended path | Available evidence | Review needed |
 | --- | --- | --- | --- | --- |
-| VIS-01 | Original 4:3 and expanded captures | `docs/assets/rendering/voot-4x3.png` and `voot-32x9.png` | R&D-03D captures/comparisons within each aspect | Match scene, camera and frame; verify captions, identity and rights |
+| VIS-01 | Verified matched 3840×1080 visibility comparison | `rendering/voot-visibility-before.png`, `voot-visibility-after.png`, `voot-visibility-comparison.png` | New FLV-DOC02-B2 captures, isolated source guard, matching streams and image hashes | Private integration authorized; public rights/publication approval remains open |
 | VIS-02 | Hor+ projection/clipping diagram | `docs/assets/rendering/horplus-clipping.svg` | Matrix guards and focused fixtures | Verify dimensions, vertical limits, RTT exclusions and labels |
 | VIS-03 | Visibility comparison | `docs/assets/rendering/visibility-comparison.png` | R&D-02D submission/geometry evidence and guarded source | Select matched gameplay images; identify source revision and correction scope |
 | VIS-04 | Runtime architecture | `docs/assets/architecture/runtime-interfaces.svg` | Public lifecycle, input/aspect and transport interfaces | Show the runtime's external contract and process ownership |
@@ -30,4 +30,8 @@ The [rendering notes](../rendering/RENDERING.md) give source anchors for project
 
 Six SVG technical figures are generated and integrated on the visuals branch: VIS-02, the numeric submission figure for VIS-03, and VIS-04 through VIS-07. Their narrow source/evidence claims are verified; maintainer approval is still required before merge. [Evidence, classifications and remaining work](VISUAL-EVIDENCE.md)
 
-VIS-01 and the gameplay-image portion of VIS-03 await scene/provenance and rights review. VIS-08 remains blocked by missing linked hardware-image evidence. The unchecked approval list above remains a maintainer checklist, not a claim that the generated figures were merged or released.
+VIS-01 is verified for the B2 matched scene and integrated privately with maintainer authorization. VIS-03 retains its separate historical numeric evidence. Public screenshot-rights approval remains open. VIS-08 remains blocked by missing linked hardware-image evidence. The unchecked approval list above remains a maintainer checklist, not a claim that the generated figures were merged or released.
+
+## VIS-01 private integration
+
+The three [B2 capture assets and provenance](rendering/vis01-provenance.json) are integrated into the README and rendering notes. Original capture pixels and approved README introduction are preserved. This does not approve public distribution or alter the remaining hardware/qualification gates.

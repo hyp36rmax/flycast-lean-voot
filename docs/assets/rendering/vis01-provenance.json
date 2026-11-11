@@ -1,0 +1,120 @@
+{
+  "asset": "VIS-01",
+  "milestone": "FLV-DOC02-B2",
+  "classification": "VERIFIED for the matched reproduced scene",
+  "captureDate": "2026-11-11",
+  "game": "Virtual-On Oratorio Tangram M.S.B.S. Ver. 5.66",
+  "gameRevisionCheck": "14 archive member sizes and recorded CRCs match the historical vonot descriptor; private game/BIOS archives are not included.",
+  "renderer": "Windows x64 Release / DX11",
+  "sourceBasis": "RD02D isolated snapshot, not a new Git commit",
+  "sourceLineage": "ac67f7646e345b874942bd0c25707c58a62fb494 + RD02B/C/D, pinned upstream 5aa091fde632fb332c8d8c34e280d62dc951954c",
+  "historicalSourceTreeManifestSHA256": "66830d668e0151df786dfd19119b27c0163e7772e53d1d0ed4b1bab67b100615",
+  "beforeSourceDifference": "core/rec-x64/rec_x64.cpp: if (op.size == 4 ...) -> if (false && op.size == 4 ...)",
+  "beforeChangedSourceSHA256": "9c0e85cb5720b500afbf149e4f0b5feaad9292d75c226ad85fd5cbcd1c2c25e8",
+  "afterChangedSourceSHA256": "be37bd59f04d6e9ce62798e789adf55bcebf4f0c51a721f979d9d2d13aee7d21",
+  "executables": [
+    {
+      "role": "before",
+      "sha256": "af51f57458ddeecf241d4f52541479aa08d3842771c9d6ecd43ce6b785a7badd",
+      "compiler": "19.51.36260.0",
+      "WindowsSDK": "10.0.26100.0",
+      "configuration": "Release",
+      "flags": {
+        "FLYCAST_VOOT_GUEST_TRACE": "OFF",
+        "FLYCAST_VOOT_RENDER_DIAGNOSTICS": "ON",
+        "OT_LEAN_RUNTIME": "ON",
+        "USE_DX11": "ON",
+        "USE_DX9": "OFF",
+        "USE_OPENGL": "OFF",
+        "USE_VULKAN": "OFF"
+      }
+    },
+    {
+      "role": "after",
+      "sha256": "fbb500b1c7554aa63f130a14c4da3745777ecf9b56bc287c7403032bb7c94736",
+      "compiler": "19.51.36260.0",
+      "WindowsSDK": "10.0.26100.0",
+      "configuration": "Release",
+      "flags": {
+        "FLYCAST_VOOT_GUEST_TRACE": "OFF",
+        "FLYCAST_VOOT_RENDER_DIAGNOSTICS": "ON",
+        "OT_LEAN_RUNTIME": "ON",
+        "USE_DX11": "ON",
+        "USE_DX9": "OFF",
+        "USE_OPENGL": "OFF",
+        "USE_VULKAN": "OFF"
+      }
+    }
+  ],
+  "conditions": {
+    "gameplayResolution": [
+      3840,
+      1080
+    ],
+    "aspect": "32:9",
+    "sample": 2,
+    "stateVersion": 854,
+    "savedStateSHA256": "cbd2f07d7c3fc835c9b52d777f190555fbd7d58c552ede9d64e729ea329b5f88",
+    "widescreen": true,
+    "superWidescreen": true,
+    "inheritedRendererClippingEnabledInBoth": true,
+    "physicalInputDisabled": true,
+    "matching": "Same saved state; four capture-relative TA streams per role match historical streams; paired projection matrices equal. Global startup frame counters are not the matching key.",
+    "absoluteGuestSimulationFrameIDExported": false
+  },
+  "independentlyMeasuredSample2": {
+    "before": {
+      "0x32151700": 0,
+      "0x32159700": 0,
+      "0x3205a800": 0
+    },
+    "after": {
+      "0x32151700": 348,
+      "0x32159700": 201,
+      "0x3205a800": 27
+    },
+    "beforeTotal": 1687,
+    "afterTotal": 2411
+  },
+  "afterPixelsEqualRecoveredHistoricalReference": true,
+  "images": [
+    {
+      "file": "voot-visibility-before.png",
+      "sha256": "9775a40a4971a7d4baf9db96834d97719f7bc359c8722a2c1f7e6fbdb5982485",
+      "bytes": 7094306,
+      "width": 3840,
+      "height": 1080,
+      "originalPPMSHA256": "5d5c3993600176a9cf34649da7beddd80a208cfe60c8c693b06eae65117438bb",
+      "originalRGBPreserved": true
+    },
+    {
+      "file": "voot-visibility-after.png",
+      "sha256": "ad4dd39895735a49873ef4eaa2e6e13d34d3c076f9bf39bede8bd5766181ec6d",
+      "bytes": 7048170,
+      "width": 3840,
+      "height": 1080,
+      "originalPPMSHA256": "9c78a864c427e112eb955e8481d34ce580f7ccebd520e05c26a4b7104dd371c1",
+      "originalRGBPreserved": true
+    },
+    {
+      "file": "voot-visibility-comparison.png",
+      "sha256": "a43263aabf2e143bab5e5d184e722cdab712cd691b096603b7937a0b96cc33da",
+      "bytes": 8169950,
+      "width": 7680,
+      "height": 1190,
+      "gameplayPanelSize": [
+        3840,
+        1080
+      ],
+      "labelMarginHeight": 110,
+      "gameplayPanelsResized": false
+    }
+  ],
+  "integrationAuthorization": "Maintainer authorized private README/rendering-document integration in a draft PR.",
+  "publicPublication": "NOT AUTHORIZED; screenshot rights and public distribution require separate approval.",
+  "limits": [
+    "Scoped to reproduced scene and visibility change, not full gameplay or production qualification.",
+    "Polygon records are geometry-submission evidence, not FPS or latency.",
+    "Raw diagnostics, source worktrees, game/BIOS archives, private system paths and host implementation are excluded."
+  ]
+}
