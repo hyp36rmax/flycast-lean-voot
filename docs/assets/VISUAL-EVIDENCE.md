@@ -6,14 +6,22 @@ The figures document source behavior and retained measurements. VERIFIED means t
 
 | ID | Asset | Classification | Scope |
 | --- | --- | --- | --- |
-| VIS-01 | Gameplay captures: 4:3, 16:9, 32:9 | NEEDS VALIDATION | Candidates exist; a matched, revision-linked and rights-approved set is not available |
+| VIS-01 | [Matched 3840×1080 visibility comparison](rendering/voot-visibility-comparison.png) | VERIFIED | New B2 source-controlled comparison; private integration authorized, public rights approval remains open |
 | VIS-02 | [Hor+ and clipping](rendering/horplus-clipping.svg) | VERIFIED | Exact equal-height aspect ratios; separate submission and clipping responsibilities |
-| VIS-03 | [Submitted polygon records](rendering/visibility-submission.svg) | VERIFIED | Numeric replay evidence only; gameplay comparison remains pending |
+| VIS-03 | [Submitted polygon records](rendering/visibility-submission.svg) | VERIFIED | Historical numeric replay evidence; the new gameplay comparison is tracked as VIS-01 |
 | VIS-04 | [Runtime interfaces](architecture/runtime-interfaces.svg) | VERIFIED | Public C++ runtime contracts; external host internals excluded |
 | VIS-05 | [Parser](performance/rd03d-parser.svg) | VERIFIED | Historical mean and P99 wall time; original sample/workload scope |
 | VIS-06 | [SH-4 dispatch](performance/rd03e-dispatch.svg) | VERIFIED | Historical mean cycles and render-start P99 regression |
 | VIS-07 | [Cabinet receive waiting](performance/rd04a-link-wait.svg) | VERIFIED | Historical active cycles for both roles; separate labeled scales |
 | VIS-08 | Hardware photos / compatibility captures | BLOCKED | No authenticated hardware photograph or revision-linked hardware compatibility record identified |
+
+## VIS-01 matched B2 captures
+
+The [rendering document](../rendering/RENDERING.md#vis-01-matched-gameplay-comparison) integrates new BEFORE/AFTER captures from isolated R&D-02D-based builds. One BEFORE-only false guard suppresses the two identified visibility limit-load adjustments, leaving projection and renderer clipping enabled in both. [Sanitized provenance](rendering/vis01-provenance.json) records source, build and image identities without private system paths or raw game data.
+
+All four captured geometry streams per role match historical counterparts; projection matrices agree. Newly measured sample-2 counts reproduce 0 → 576 in the identified far-mesh groups and 1,687 → 2,411 overall. The unmodified full-frame PNGs are 3840×1080; the comparison adds labels without resizing either panel. This is a matched rendered-state/capture-sequence result; no absolute guest simulation-frame ID was exported.
+
+The maintainer has authorized integration into a private draft PR. That authorization does not establish public screenshot rights or permit public distribution. Broader scene/gameplay qualification and VIS-08 remain open.
 
 ## VIS-02 projection and clipping
 
@@ -31,7 +39,7 @@ The [aggregate record](rendering/rd02d-submission.json) retains hashes of the en
 
 The investigation used an isolated RD02D source snapshot, not a new Git commit, against pinned upstream `5aa091fde632fb332c8d8c34e280d62dc951954c`. The source manifest identifies the snapshot. Its final Release executable identity does not independently identify each intermediate diagnostic trace build. The figure makes no final-binary performance claim. Short physical checks reported in the historical record do not replace full stage/camera/HUD or current consolidated-source qualification.
 
-The groups are local material/mesh evidence, not formal guest object IDs. The bar uses a linear zero-based 0–600 polygon scale and represents counts, not geometric size. No gameplay frames were synthesized. A matched, rights-approved screenshot comparison is pending.
+The groups are local material/mesh evidence, not formal guest object IDs. The bar uses a linear zero-based 0–600 polygon scale and represents counts, not geometric size. No gameplay frames were synthesized. The new [VIS-01 B2 comparison](../rendering/RENDERING.md#vis-01-matched-gameplay-comparison) supplies matched gameplay images for private review; public rights approval remains open.
 
 ## VIS-04 runtime interfaces
 
@@ -59,9 +67,9 @@ The figures identify historical studies, not benchmarks of consolidated `main`. 
 
 The maintainer archive contains original 1440×1080 (4:3) and 3840×1080 (32:9) RD03D DX11 readbacks from saved Solo sample 2, with same-aspect baseline/candidate pixel equality and source/binary manifests. Those pairs demonstrate palette-study equivalence within each aspect; matching sample numbers alone does not approve a cross-aspect gameplay comparison.
 
-1920×1080 image candidates also exist in later display/effect investigations. Dimensions alone do not establish Hor+ flags, scene suitability or accepted source revision. Some captures belong to explicitly rejected experiments and must not illustrate accepted rendering behavior. Complete original trace-build linkage, matched camera/scene selection and publication rights remain required before any gameplay image is committed.
+1920×1080 image candidates also exist in later display/effect investigations. Dimensions alone do not establish Hor+ flags, scene suitability or accepted source revision. Some captures belong to explicitly rejected experiments and must not illustrate accepted rendering behavior. Those older candidates do not replace the new source-controlled B2 comparison. VIS-01 now uses the newly verified pair; other gameplay captures still require their own provenance and rights review.
 
-Known build tools are documented in [validation platform](../hardware/VALIDATION-PLATFORM.md). Runtime device names or monitor logs are not a hardware compatibility test. No suitable authenticated hardware photograph was identified in the scoped archive search; bundled upstream artwork was excluded. Exact models, drivers, OS, binary/source linkage, test scope, image rights and privacy review are still required for VIS-08. No screenshots or photographs are added by this change.
+Known build tools are documented in [validation platform](../hardware/VALIDATION-PLATFORM.md). Runtime device names or monitor logs are not a hardware compatibility test. No suitable authenticated hardware photograph was identified in the scoped archive search; bundled upstream artwork was excluded. Exact models, drivers, OS, binary/source linkage, test scope, image rights and privacy review are still required for VIS-08. Only the three verified VIS-01 B2 gameplay PNGs are integrated privately. No hardware photograph is added.
 
 ## Maintenance and visual validation
 

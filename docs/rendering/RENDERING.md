@@ -42,6 +42,20 @@ Inside Flycast's existing dynamic SH-4 compiler, the correction recognizes two i
 
 This R&D-02D figure summarizes the retained matched Solo replay at 3840×1080, sample 2, in the x64/DX11 diagnostic investigation. The three material groups contribute 348 + 201 + 27 polygon records. The whole sample changes from 1,687 to 2,411 polygons, including other returning geometry. These are local mesh identifiers, not formal guest object IDs. [Record identities and scope](../assets/VISUAL-EVIDENCE.md#vis-03-submission-evidence)
 
+## VIS-01 matched gameplay comparison
+
+FLV-DOC02-B2 rebuilt two isolated Windows x64 DX11 diagnostics from the preserved R&D-02D source. BEFORE disables only the guard for the two horizontal visibility limit-load adjustments; AFTER retains the correction. Both keep the same widescreen projection, renderer clipping, vertical framing, HUD logic and capture instrumentation. BEFORE represents the original visibility restriction in a controlled build, rather than an untouched historical executable.
+
+![VIS-01: original-visibility and corrected 3840×1080 Solo frames showing the far left-edge mesh returning with identical camera projection](../assets/rendering/voot-visibility-comparison.png)
+
+The far humanoid mesh at the extreme left is missing with the original guest visibility bounds and returns with the guarded correction. Full frames are available as [BEFORE — Original VOOT Visibility](../assets/rendering/voot-visibility-before.png) and [AFTER — Flycast Lean VOOT Correction](../assets/rendering/voot-visibility-after.png). Each is an uncropped 3840×1080 lossless framebuffer capture. The side-by-side image adds a label margin; neither gameplay panel is resized or reconstructed.
+
+These are new captures from the same preserved ver854 Solo state, with physical input disabled. All four capture-relative geometry streams per variant match the corresponding historical R&D-02D streams byte for byte, and paired projection matrices are identical. The new AFTER pixels also match the recovered R&D-03D reference. Matching uses the saved state, rendered scene and capture-relative sequence; an absolute guest simulation-frame ID was not exported, and differing global startup frame counters are not treated as the matching key.
+
+Independent recounting of the **new** sample-2 records reproduces 0/0/0 → 348/201/27 polygons in the three far-mesh groups (576 restored records), and 1,687 → 2,411 for the whole sample. Other legitimately submitted geometry accounts for the remaining increase. These are geometry-submission measurements, not gameplay FPS or latency results. The earlier VIS-03 figure remains historical evidence.
+
+The [VIS-01 provenance record](../assets/rendering/vis01-provenance.json) identifies source differences, compiler/SDK, executable and image hashes, and matching conditions. Private raw diagnostics, game/BIOS archives and source/build workspaces are excluded. The maintainer authorized this private draft integration; public publication and screenshot-rights approval remain separate. The comparison qualifies this reproduced scene, not all stages, camera angles or the current production runtime.
+
 ## Aspect and HUD qualification
 
 The retained R&D-02D record reports restored submitted geometry and short physical checks at original 4:3, 16:9 and ultrawide aspects. Wider stage, character and camera-angle coverage remains pending. The consolidated revision has its own scoped [automated and startup validation](../ENGINEERING.md#validation-scope).
@@ -50,4 +64,4 @@ World expansion and HUD placement need separate review. The targeted visibility 
 
 ## Maintainer figure review
 
-The [asset checklist](../assets/ASSET-CHECKLIST.md) plans matched captures and projection/visibility figures. The technical figures are available for maintainer review. Gameplay scene selection, capture provenance and image rights remain pending. [Figure evidence](../assets/VISUAL-EVIDENCE.md)
+The [asset checklist](../assets/ASSET-CHECKLIST.md) plans matched captures and projection/visibility figures. The technical figures are available for maintainer review. VIS-01 now has a verified matched scene and provenance for private integration. Public screenshot-rights approval and hardware imagery remain pending. [Figure evidence](../assets/VISUAL-EVIDENCE.md)

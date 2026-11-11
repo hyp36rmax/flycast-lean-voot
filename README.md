@@ -78,9 +78,13 @@ Getting the original game running gave us a baseline. The work that followed foc
 
 ![Public runtime architecture separating original Flycast emulation, Lean modifications and external host responsibilities](docs/assets/architecture/runtime-interfaces.svg)
 
-The rendering path separates guest geometry submission from host projection and clipping:
+A matched 3840×1080 Solo replay shows the visibility correction restoring the far mesh at the left edge:
 
-![Exact-ratio 4:3, 16:9 and 32:9 Hor+ framing with preserved vertical limits and separate guest visibility correction](docs/assets/rendering/horplus-clipping.svg)
+![VIS-01: matched 3840×1080 frames, with the far left-edge mesh absent before the guest visibility correction and present afterward](docs/assets/rendering/voot-visibility-comparison.png)
+
+Left: original visibility. Right: correction enabled. Both captures retain the same projection and vertical framing. This documents restored geometry submission, not a gameplay FPS gain. [Full-resolution captures and provenance](docs/rendering/RENDERING.md#vis-01-matched-gameplay-comparison) · [Projection and clipping diagram](docs/assets/rendering/horplus-clipping.svg)
+
+The gameplay captures depict original game artwork and are included for authorized private maintainer review. Public screenshot distribution remains unapproved.
 
 ## Performance and Validation
 
