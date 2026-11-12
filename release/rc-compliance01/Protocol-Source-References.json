@@ -1,0 +1,240 @@
+[
+  {
+    "variant": "Solo-Local",
+    "path": "core/hosted_startup.cpp",
+    "sha256": "B7F4850F6EF997D30B3009207692DC1D0F6CAB47D7CB92309A34DD5CCE1DF847",
+    "relevantLines": {
+      "bool initialize()": 272,
+      "bool window_input_enabled": 320,
+      "void window_created": 321,
+      "void poll(": 404,
+      "void frame_submitted": 401,
+      "void aspect_presented": 452,
+      "struct Packet": null,
+      "struct alignas(8) Packet": null,
+      "FLYCAST_HOST_CONFIG_DIR": null,
+      "config::parseCommandLine": null
+    }
+  },
+  {
+    "variant": "Solo-Local",
+    "path": "core/hosted_startup.h",
+    "sha256": "3175C2AD4C538E69113F32A33ECB760FFD58B540CBFFB2B50352BA0141230C9B",
+    "relevantLines": {
+      "bool initialize()": 7,
+      "bool window_input_enabled": 12,
+      "void window_created": 14,
+      "void poll(": 19,
+      "void frame_submitted": 16,
+      "void aspect_presented": 21,
+      "struct Packet": null,
+      "struct alignas(8) Packet": null,
+      "FLYCAST_HOST_CONFIG_DIR": null,
+      "config::parseCommandLine": null
+    }
+  },
+  {
+    "variant": "Solo-Local",
+    "path": "core/hosted_input.h",
+    "sha256": "C72673328DB4AAE26EEF09A6934C7FE1F645A9A27AF15881BAABB7E2AFA80ED5",
+    "relevantLines": {
+      "bool initialize()": null,
+      "bool window_input_enabled": null,
+      "void window_created": null,
+      "void poll(": null,
+      "void frame_submitted": null,
+      "void aspect_presented": null,
+      "struct Packet": 6,
+      "struct alignas(8) Packet": null,
+      "FLYCAST_HOST_CONFIG_DIR": null,
+      "config::parseCommandLine": null
+    }
+  },
+  {
+    "variant": "Solo-Local",
+    "path": "core/hosted_aspect.h",
+    "sha256": "0B123179E427E3206BFE17008DE4D0479938A4DC69D582B70875F6B8CB7B7F6F",
+    "relevantLines": {
+      "bool initialize()": null,
+      "bool window_input_enabled": null,
+      "void window_created": null,
+      "void poll(": null,
+      "void frame_submitted": null,
+      "void aspect_presented": null,
+      "struct Packet": null,
+      "struct alignas(8) Packet": 10,
+      "FLYCAST_HOST_CONFIG_DIR": null,
+      "config::parseCommandLine": null
+    }
+  },
+  {
+    "variant": "Solo-Local",
+    "path": "core/sdl/sdl.cpp",
+    "sha256": "43F39C42987F6761E6D70AE1F623ED229F2A229541E628E716D24249EAA8981C",
+    "relevantLines": {
+      "bool initialize()": null,
+      "bool window_input_enabled": null,
+      "void window_created": null,
+      "void poll(": null,
+      "void frame_submitted": null,
+      "void aspect_presented": null,
+      "struct Packet": null,
+      "struct alignas(8) Packet": null,
+      "FLYCAST_HOST_CONFIG_DIR": null,
+      "config::parseCommandLine": null
+    }
+  },
+  {
+    "variant": "Solo-Local",
+    "path": "core/windows/winmain.cpp",
+    "sha256": "AB3BE181A0528DD6E45C0EF1285C6B1FFC90C148C1076C2C241E573CD1F3F89F",
+    "relevantLines": {
+      "bool initialize()": null,
+      "bool window_input_enabled": null,
+      "void window_created": null,
+      "void poll(": null,
+      "void frame_submitted": null,
+      "void aspect_presented": null,
+      "struct Packet": null,
+      "struct alignas(8) Packet": null,
+      "FLYCAST_HOST_CONFIG_DIR": 82,
+      "config::parseCommandLine": null
+    }
+  },
+  {
+    "variant": "Solo-Local",
+    "path": "core/nullDC.cpp",
+    "sha256": "FAB7B1E54CEBBF656B19A13851AEC4810D6F4E4E9E4E618C12D14FD7630C321B",
+    "relevantLines": {
+      "bool initialize()": null,
+      "bool window_input_enabled": null,
+      "void window_created": null,
+      "void poll(": null,
+      "void frame_submitted": null,
+      "void aspect_presented": null,
+      "struct Packet": null,
+      "struct alignas(8) Packet": null,
+      "FLYCAST_HOST_CONFIG_DIR": null,
+      "config::parseCommandLine": 82
+    }
+  },
+  {
+    "variant": "LAN",
+    "path": "core/hosted_startup.cpp",
+    "sha256": "B7F4850F6EF997D30B3009207692DC1D0F6CAB47D7CB92309A34DD5CCE1DF847",
+    "relevantLines": {
+      "bool initialize()": 272,
+      "bool window_input_enabled": 320,
+      "void window_created": 321,
+      "void poll(": 404,
+      "void frame_submitted": 401,
+      "void aspect_presented": 452,
+      "struct Packet": null,
+      "struct alignas(8) Packet": null,
+      "FLYCAST_HOST_CONFIG_DIR": null,
+      "config::parseCommandLine": null
+    }
+  },
+  {
+    "variant": "LAN",
+    "path": "core/hosted_startup.h",
+    "sha256": "3175C2AD4C538E69113F32A33ECB760FFD58B540CBFFB2B50352BA0141230C9B",
+    "relevantLines": {
+      "bool initialize()": 7,
+      "bool window_input_enabled": 12,
+      "void window_created": 14,
+      "void poll(": 19,
+      "void frame_submitted": 16,
+      "void aspect_presented": 21,
+      "struct Packet": null,
+      "struct alignas(8) Packet": null,
+      "FLYCAST_HOST_CONFIG_DIR": null,
+      "config::parseCommandLine": null
+    }
+  },
+  {
+    "variant": "LAN",
+    "path": "core/hosted_input.h",
+    "sha256": "C72673328DB4AAE26EEF09A6934C7FE1F645A9A27AF15881BAABB7E2AFA80ED5",
+    "relevantLines": {
+      "bool initialize()": null,
+      "bool window_input_enabled": null,
+      "void window_created": null,
+      "void poll(": null,
+      "void frame_submitted": null,
+      "void aspect_presented": null,
+      "struct Packet": 6,
+      "struct alignas(8) Packet": null,
+      "FLYCAST_HOST_CONFIG_DIR": null,
+      "config::parseCommandLine": null
+    }
+  },
+  {
+    "variant": "LAN",
+    "path": "core/hosted_aspect.h",
+    "sha256": "0B123179E427E3206BFE17008DE4D0479938A4DC69D582B70875F6B8CB7B7F6F",
+    "relevantLines": {
+      "bool initialize()": null,
+      "bool window_input_enabled": null,
+      "void window_created": null,
+      "void poll(": null,
+      "void frame_submitted": null,
+      "void aspect_presented": null,
+      "struct Packet": null,
+      "struct alignas(8) Packet": 10,
+      "FLYCAST_HOST_CONFIG_DIR": null,
+      "config::parseCommandLine": null
+    }
+  },
+  {
+    "variant": "LAN",
+    "path": "core/sdl/sdl.cpp",
+    "sha256": "43F39C42987F6761E6D70AE1F623ED229F2A229541E628E716D24249EAA8981C",
+    "relevantLines": {
+      "bool initialize()": null,
+      "bool window_input_enabled": null,
+      "void window_created": null,
+      "void poll(": null,
+      "void frame_submitted": null,
+      "void aspect_presented": null,
+      "struct Packet": null,
+      "struct alignas(8) Packet": null,
+      "FLYCAST_HOST_CONFIG_DIR": null,
+      "config::parseCommandLine": null
+    }
+  },
+  {
+    "variant": "LAN",
+    "path": "core/windows/winmain.cpp",
+    "sha256": "AB3BE181A0528DD6E45C0EF1285C6B1FFC90C148C1076C2C241E573CD1F3F89F",
+    "relevantLines": {
+      "bool initialize()": null,
+      "bool window_input_enabled": null,
+      "void window_created": null,
+      "void poll(": null,
+      "void frame_submitted": null,
+      "void aspect_presented": null,
+      "struct Packet": null,
+      "struct alignas(8) Packet": null,
+      "FLYCAST_HOST_CONFIG_DIR": 82,
+      "config::parseCommandLine": null
+    }
+  },
+  {
+    "variant": "LAN",
+    "path": "core/nullDC.cpp",
+    "sha256": "FAB7B1E54CEBBF656B19A13851AEC4810D6F4E4E9E4E618C12D14FD7630C321B",
+    "relevantLines": {
+      "bool initialize()": null,
+      "bool window_input_enabled": null,
+      "void window_created": null,
+      "void poll(": null,
+      "void frame_submitted": null,
+      "void aspect_presented": null,
+      "struct Packet": null,
+      "struct alignas(8) Packet": null,
+      "FLYCAST_HOST_CONFIG_DIR": null,
+      "config::parseCommandLine": 82
+    }
+  }
+]

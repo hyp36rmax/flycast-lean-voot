@@ -1,0 +1,277 @@
+PROJECT OT — Windows hosted runtime interoperability
+RC-UNBLOCK01 corrected runtimes; protocol documentation prepared November 11, 2026.
+Publication/recipient terms remain subject to approval. No private host source is included.
+
+Scope and source authority
+--------------------------
+Windows x64, little endian. This documents the actual supplied runtime contract,
+not a general Flycast standard or a promise of compatibility with other builds.
+The authoritative runtime definitions are core/hosted_startup.cpp/.h,
+core/hosted_input.h and core/hosted_aspect.h in each matching source archive.
+Consumers include core/sdl/sdl.cpp, core/audio/audiostream.cpp and the original
+JVS/input/network paths. This document does not replace required source.
+
+Startup and discovery
+---------------------
+Pass each option as two arguments: -config section:key=value. Put all options
+before the final content path; the existing parser stops option handling there.
+host:Session is a fresh canonical 36-character GUID string, used as an object-name
+token, not a secret/license key. Prefix every object below with:
+  Local\FlycastHost-<Session>-
+Create objects before starting the child. Use a fresh token for every cabinet.
+Do not reuse another process's namespace. Local\ is Windows session scope, not
+a network listener. Same-user/session access is assumed; no custom security
+descriptor or cryptographic peer authentication is defined by this protocol.
+
+host:InputChannel=3 requests InputV3. Absence/0 uses the older window-input path;
+other versions fail hosted initialization. host:InputRole is 0 Solo, 1 MASTER,
+2 SLAVE. host:InputGeneration is 32 hex digits decoded directly into 16 bytes
+in textual pair order; do not substitute Guid.ToByteArray's reordered encoding.
+host:CabinetCount=2 is passed for paired Local VS and a LAN cabinet. It is not
+an assertion that peer handshake or guest link initialization has completed.
+host:AllowSoloFastForward=yes is restricted to an explicit hidden Solo diagnostic;
+it is not a linked gameplay setting. Normal execution does not request it.
+
+Environment:
+  FLYCAST_HOST_CONFIG_DIR and FLYCAST_HOST_DATA_DIR: when either is set, both
+  must be absolute Windows paths. The Windows runtime owns copies of the UTF-8
+  values and uses them for configuration and persistent data. Use isolated paths.
+  FLYCAST_HOST_INPUT_HWND: decimal host HWND; FLYCAST_HOST_INPUT_PID: host PID.
+  These identify the owner for optional native messages and InputV3 validation.
+  They are local OS identities, not guest addresses or arbitrary callback pointers.
+
+Events — all ManualReset, initially nonsignaled
+---------------------------------------------
+The host creates all nine events; the runtime opens them with SYNCHRONIZE and
+EVENT_MODIFY_STATE. Missing required events make hosted initialization fail.
+Suffix                 Producer -> observer     Meaning
+Created                runtime -> host         Owned SDL native window tagged.
+GuestFrameSubmitted    runtime -> host         First guest frame submission.
+Activate               host -> runtime         Request presentation activation.
+Activated              runtime -> host         Runtime shown without focus steal;
+                                              normal-speed/audio gate released.
+Stop                   host -> runtime         Neutralize input, request restore
+                                              and dc_exit through existing path.
+FastOn                 host -> runtime         Diagnostic request; restricted.
+FastOff                host -> runtime         Disable diagnostic fast-forward.
+Pause                  host -> runtime         Legacy GUI-pause request in Solo.
+Resume                 host -> runtime         Legacy GUI resume request.
+
+Created is not guest readiness. GuestFrameSubmitted is not scanout, an attract
+screen or gameplay readiness. The runtime activates only after submission,
+Activate, an available window and a closed runtime GUI. Do not expose a hidden
+child early. Stop is a request, not proof of process/resource cleanup: the process
+owner must observe exit and release its own OS handles. Legacy Pause/Resume
+events toggle the runtime GUI; do not confuse them with acknowledged guest Pause
+messages described below. FastOff/On and legacy Pause/Resume are consumed/reset
+by the runtime. No new fast-forward or pause semantics are specified here.
+
+The runtime sets a native window property named <prefix>Created to integer 1.
+Find the SDL HWND for the owned PID with that exact property; a process main
+window handle alone may be stale or ambiguous. Revalidate PID/window identity
+after recreation. Window styles/bounds are presentation operations, not guest FOV.
+
+InputV3 — 144 bytes, native 8-byte alignment
+------------------------------------------
+Mapping suffix: InputV3. Mutex suffix: InputLockV3.
+The host creates both; the runtime opens the existing mapping and mutex. Both
+sides use a nonblocking mutex acquisition for mailbox copies. The emulation
+thread consumes a process-local publication at the existing JVS boundary; do not
+extend the cross-process lock over emulation, waits or rendering.
+Fields below are fixed-width; H=host writes, R=runtime writes. Initial memory is
+zero. Role/generation/hostPid are host initialized. Runtime advertises version 3
+while polling. The host must observe that capability before gameplay updates.
+
+Offset Bytes Type     Field              Writer
+0      4     i32      version            R
+4      4     i32      enabled            H
+8      4     i32      role               H
+12     4     u32      mask               H
+16     8     i64      sequence           H
+24     8     i64      acknowledged       R
+32     8     i64      heartbeat          H
+40     16    u8[16]   generation         H
+56     4     i32      error              R
+60     4     u32      applied            R
+64     8     i64      sampledSequence    R
+72     4     u32      sampledKcode       R
+76     4     u32      runtimePid         R
+80     4     u32      hostPid            H
+84     4     u32      appliedEnabled     R
+88     8     i64      samples            R
+96     8     i64      publishedAt        R
+104    8     i64      sampledAt          R
+112    8     i64      observedSequence   R
+120    4     i32      observedMask       R
+124    4     u32      jvsInputs          R
+128    4     i32      link               R
+132    4     i32      reserved           reserved
+136    8     i64      padding            reserved
+
+Do not repurpose reserved fields without a new compatible contract.
+mask bits: 0/1/2/3 left-lever Up/Down/Left/Right; 4/5/6/7 right-lever directions;
+8 left weapon, 9 right weapon, 10 left turbo, 11 right turbo, 12 Start.
+Only bits 0..12 are valid in InputV3. A complete level snapshot supersedes the
+previous one; this is not an event queue or a claim of accepted weapon discharge.
+Increase sequence for changed enabled/mask state. Identical sequence cannot
+carry a changed enabled/mask. Update heartbeat even if the state is held.
+heartbeat and timestamps use the same Windows GetTickCount64 millisecond domain,
+not wall clock, UTC or cross-PC synchronized time. Runtime rejects a future,
+negative, regressing or older-than-250-ms heartbeat. Process-local publication
+also neutralizes on unavailable/expired mailbox access. Do not lengthen this
+lease as a networking workaround.
+
+Runtime error: 0 valid; 1 invalid HWND/host PID ownership; 2 role/generation
+mismatch; 3 invalid/regressing sequence or changed data under the same sequence;
+4 invalid mask/enabled; 5 invalid/expired heartbeat. enabled must be 0 or 1.
+The runtime neutralizes rejected input. A host must distinguish initial expired
+neutral state from a valid gameplay publication and avoid sending stale controls.
+Runtime application also requires activated state and a nonpaused host session.
+acknowledged reports publication acceptance; sampledSequence/kcode/jvsInputs
+report observation at guest input sampling. They are not confirmed game actions.
+link is 0 when offline, otherwise 1 | (slotId << 8) | (slotCount << 16).
+Guest link fields are observations; writing them is not a supported command.
+
+The packet contains scalar application protocol data, including input diagnostics.
+It contains no guest RAM pointer, emulator object layout, SH-4 register file,
+PowerVR command structure or function pointer. The contract still provides
+substantial real-time control; this technical observation is not legal clearance.
+
+AspectV1 — 64 bytes, native 8-byte alignment
+-----------------------------------------
+Mapping suffix: AspectV1. Optional; no map means no live-aspect capability.
+The host creates the zeroed mapping. Runtime writes version=1 and reserved=2;
+the latter advertises deferred presentation admission, not another packet version.
+Use atomic 32-bit compare/exchange for state and publish other request fields
+before Requested. Only one transaction may be in flight for a cabinet/session.
+
+Offset Bytes Type Field
+0      4     i32  version
+4      4     i32  state
+8      4     i32  sequence
+12     4     i32  aspect
+16     4     i32  x
+20     4     i32  y
+24     4     i32  width
+28     4     i32  height
+32     8     u64  deadline
+40     4     i32  error
+44     4     i32  outputWidth
+48     4     i32  outputHeight
+52     4     i32  internalWidth
+56     4     i32  internalHeight
+60     4     i32  reserved
+
+Host request fields: sequence>0, aspect, x/y/width/height, initial deadline,
+cleared error; host may request Commit or Cancel. Runtime writes admission,
+terminal/presentation states, error, measured geometry, capability fields and
+the admitted deadline. aspect: 0=4:3, 1=16:9, 2=21:9, 3=32:9. For aspect 2 the
+checked ratio is 64/27; for 3 it is 32/9, within .005. Width/height are the actual
+output client viewport, not a fixed full-display size or the quality preset.
+Minimum 320x240, maximum 16384x8640. Do not conflate a cabinet viewport with the
+overall Local VS display. AspectV1 live transactions are Solo-only.
+
+States: 0 Idle, 1 Requested, 2 Applying, 3 Presented, 4 Commit, 5 Committed,
+6 Cancel, 7 RolledBack, 8 Rejected, 9 Restoring.
+Normal path: host Requested -> runtime Applying -> runtime Presented -> host
+Commit -> runtime Committed. Before admission, a renderer presentation checkpoint
+must occur; Requested may remain queued through unsafe initialization. On
+admission the runtime renews deadline to now+4000 ms. Presented requires both
+render evidence and a matching output-size presentation. Terminal Committed is
+also presentation gated. A selection is not committed just because a resize API
+returned. Error 1=ineligible/invalid request, 2=display metrics mismatch,
+3=application exception. Cancellation/expiration while applied starts Restoring;
+RolledBack is published only after restored geometry is presented. A queued,
+unapplied Cancel can be acknowledged RolledBack without applying it.
+
+Guards include active Solo, no networking/multiboard, DX11, original rotation,
+framebuffer mode off, screen stretching 100 and VOOT's exact game identity.
+The runtime saves/restores its previous window and widescreen/clipping settings.
+No guest camera RAM or original game instructions are written by this protocol.
+The existing host uses a 3-second admitted acknowledgment window and 2-second
+rollback acknowledgment window; the deferred-admission capability avoids treating
+queued Requested time as applied work. Uncertain rollback is not success: retain
+the latest selection and revalidate the same session/presentation before reuse.
+Do not publish another request over a pending or uncertain transaction.
+
+Owned window and input messages
+------------------------------
+Input capability property: ProjectOT.WindowInput.v1 = 1.
+Overlay capability property: ProjectOT.DiagnosticsOverlay.v1 = 1.
+Acknowledged Solo pause property: ProjectOT.GuestPause.v1 = 1 after activation.
+Validate HWND -> PID -> owned executable identity. Runtime validates the owner
+HWND/PID from the environment. These are per-window messages, not global hooks.
+
+0x8051 (WM_APP+0x51): host -> runtime normalized legacy contacts. wParam=owner
+HWND, lParam=15-bit mask. Bits 0..12 match the action ordering above; 13 Coin,
+14 Quick Mode. Returns 1 applied at adapter, 2 suspended/neutralized, 0 rejected.
+It is disabled when InputV3 was negotiated; never run two input writers.
+An acknowledgment is not proof that the original game accepted an action.
+
+0x8052: runtime -> host key routing. Low byte wParam=virtual key; bit 0x100
+means down, otherwise up; lParam=source HWND. Repeated key-down is filtered
+at the runtime window. System chords retain Windows ownership. The existing
+developer Ctrl+Shift+F11 special notification uses wParam=1024; it is not a
+gameplay key. Do not invent another global keyboard route.
+0x8053: runtime -> host focus notification. wParam=0 loss / 1 gain;
+lParam=source HWND. Losing focus requires input neutralization as appropriate.
+0x8054: host -> runtime handback request, owner HWND in wParam. Only the owned
+foreground runtime accepts it; neutralizes contacts and calls the standard
+AllowSetForegroundWindow for the host PID. Return 1=allowed, 0=not allowed.
+
+0x8055: host -> runtime acknowledged guest Pause. wParam=owner HWND;
+lParam=0 query, 1 request Pause, 2 request Resume. Return/state: 0 unavailable,
+1 running, 2 paused, 3 pending, 4 rejected/failed. The request is applied on
+the existing runtime thread, not in the message callback. Linked/network modes
+and an active aspect transaction reject this Solo route. Observe acknowledgment
+and session ownership; do not infer a pause from a posted request alone.
+0x8056/0x8057: owner-authorized low/high 32-bit snapshots of the runtime's
+SH-4 scheduler counter. Use high/low/high and retry low if high changed. This
+is an equivalent runtime counter, not FPS or synchronized cross-PC time.
+
+WM_COPYDATA 0x004a: wParam=owner HWND; COPYDATASTRUCT.dwData=0x4f544f10|flags,
+where flags low bits 1=Display Information and 2=FPS overlay. Other tag bits
+must match. On x64 COPYDATASTRUCT offsets are 0 tag/u64, 8 cbData/u32, 16
+lpData/native pointer, total 24 bytes. lpData is an OS-marshaled UTF-8 payload,
+not a pointer into shared guest/runtime state. cbData is 1..512 including one
+terminal NUL; embedded NULs are rejected. Runtime requires valid owner, active
+state and capability; returns 1 accepted, 0 rejected. flags=0 clears overlay.
+The text is host-authored display information; this packet does not define
+or replace the runtime's FPS calculation.
+
+Build, independent use and modification
+--------------------------------------
+Use the corresponding variant source archive and dependency/notice archives,
+Restore-Source.py and Build-Windows.ps1 from this delivery. Required specialized
+flags include OT_LEAN_RUNTIME=ON, FLYCAST_HOSTED_STARTUP=ON, USE_CDI=OFF,
+OT_VOOT_RESOURCE_SET=ON, USE_DX11=ON, DX9/OpenGL/Vulkan OFF. Preserve the recorded
+compiler/SDK and remaining flags in BUILD-WINDOWS.md. No private Experience
+source/library is an input to the runtime C++ build.
+
+For independent runtime use, leave host:Session empty/absent. The runtime's
+initialize() then returns without requesting hosted gating; SDL does not hide
+the window for hosted activation. Pass the legally obtained content path after
+all -config options and provide an isolated configuration/save directory and
+real authorized NAOMI BIOS. The corresponding source implements this path;
+independent launch on these exact binaries was not newly executed here.
+The runtime-side host implementation performs no Project OT executable-hash,
+online-license or secret-key validation. A compatible independent host can
+implement this documented protocol without the private Experience library.
+Such a replacement host has not been built or qualified by this documentation.
+
+The official ProjectOT.dll intentionally pins both embedded runtime identity
+metadata and package records. It rejects a changed executable even if only the
+editable manifest is changed. Therefore rebuilding the runtime alone does NOT
+make it launchable through that unchanged official host. No user hash override
+is claimed. Independent execution is a distinct route, not proof of compliance
+with every applicable installation-information obligation. A scope decision must
+address any required host build/install/relink material or an approved remedy.
+
+Compatibility and safety boundaries
+----------------------------------
+Keep role/generation/PID ownership, mutex discipline, input lease and explicit
+aspect terminal states. Do not write observations as commands. Clean up owned
+maps/events/window handles after observed process exit. Do not open LAN services
+merely to use these local IPC objects. This specification does not modify NAOMI
+roles, game timing, network transport, controller mappings or presentation policy.
+It documents existing behavior only and does not establish legal independence.

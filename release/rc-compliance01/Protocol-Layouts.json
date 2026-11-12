@@ -1,0 +1,207 @@
+{
+  "InputV3": {
+    "size": 144,
+    "fields": [
+      {
+        "name": "version",
+        "offset": 0,
+        "bytes": 4
+      },
+      {
+        "name": "enabled",
+        "offset": 4,
+        "bytes": 4
+      },
+      {
+        "name": "role",
+        "offset": 8,
+        "bytes": 4
+      },
+      {
+        "name": "mask",
+        "offset": 12,
+        "bytes": 4
+      },
+      {
+        "name": "sequence",
+        "offset": 16,
+        "bytes": 8
+      },
+      {
+        "name": "acknowledged",
+        "offset": 24,
+        "bytes": 8
+      },
+      {
+        "name": "heartbeat",
+        "offset": 32,
+        "bytes": 8
+      },
+      {
+        "name": "generation",
+        "offset": 40,
+        "bytes": 16
+      },
+      {
+        "name": "error",
+        "offset": 56,
+        "bytes": 4
+      },
+      {
+        "name": "applied",
+        "offset": 60,
+        "bytes": 4
+      },
+      {
+        "name": "sampledSequence",
+        "offset": 64,
+        "bytes": 8
+      },
+      {
+        "name": "sampledKcode",
+        "offset": 72,
+        "bytes": 4
+      },
+      {
+        "name": "runtimePid",
+        "offset": 76,
+        "bytes": 4
+      },
+      {
+        "name": "hostPid",
+        "offset": 80,
+        "bytes": 4
+      },
+      {
+        "name": "appliedEnabled",
+        "offset": 84,
+        "bytes": 4
+      },
+      {
+        "name": "samples",
+        "offset": 88,
+        "bytes": 8
+      },
+      {
+        "name": "publishedAt",
+        "offset": 96,
+        "bytes": 8
+      },
+      {
+        "name": "sampledAt",
+        "offset": 104,
+        "bytes": 8
+      },
+      {
+        "name": "observedSequence",
+        "offset": 112,
+        "bytes": 8
+      },
+      {
+        "name": "observedMask",
+        "offset": 120,
+        "bytes": 4
+      },
+      {
+        "name": "jvsInputs",
+        "offset": 124,
+        "bytes": 4
+      },
+      {
+        "name": "link",
+        "offset": 128,
+        "bytes": 4
+      },
+      {
+        "name": "reserved",
+        "offset": 132,
+        "bytes": 4
+      },
+      {
+        "name": "padding",
+        "offset": 136,
+        "bytes": 8
+      }
+    ]
+  },
+  "AspectV1": {
+    "size": 64,
+    "fields": [
+      {
+        "name": "version",
+        "offset": 0,
+        "bytes": 4
+      },
+      {
+        "name": "state",
+        "offset": 4,
+        "bytes": 4
+      },
+      {
+        "name": "sequence",
+        "offset": 8,
+        "bytes": 4
+      },
+      {
+        "name": "aspect",
+        "offset": 12,
+        "bytes": 4
+      },
+      {
+        "name": "x",
+        "offset": 16,
+        "bytes": 4
+      },
+      {
+        "name": "y",
+        "offset": 20,
+        "bytes": 4
+      },
+      {
+        "name": "width",
+        "offset": 24,
+        "bytes": 4
+      },
+      {
+        "name": "height",
+        "offset": 28,
+        "bytes": 4
+      },
+      {
+        "name": "deadline",
+        "offset": 32,
+        "bytes": 8
+      },
+      {
+        "name": "error",
+        "offset": 40,
+        "bytes": 4
+      },
+      {
+        "name": "outputWidth",
+        "offset": 44,
+        "bytes": 4
+      },
+      {
+        "name": "outputHeight",
+        "offset": 48,
+        "bytes": 4
+      },
+      {
+        "name": "internalWidth",
+        "offset": 52,
+        "bytes": 4
+      },
+      {
+        "name": "internalHeight",
+        "offset": 56,
+        "bytes": 4
+      },
+      {
+        "name": "reserved",
+        "offset": 60,
+        "bytes": 4
+      }
+    ]
+  }
+}

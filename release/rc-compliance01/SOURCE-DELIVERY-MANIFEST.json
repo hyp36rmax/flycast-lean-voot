@@ -1,0 +1,42 @@
+{
+  "variants": {
+    "Solo-Local": {
+      "commit": "d275fdabcad18ba3d236dcbcdb40885ceefaa0a7",
+      "archive": "Solo-Local-RC-UNBLOCK01.zip",
+      "sha256": "3D04AE0ECE51637D47F52D2BA76F1222D6366AF4CA3FC0FA506DC41784EF3C7F",
+      "frozenExecutableSha256": "43DEE4CF0CBEC6AA731D33C765C06F8B1C29AB32BB6E75B06225E1A26FE4A022",
+      "baseCommit": "d275fdabcad18ba3d236dcbcdb40885ceefaa0a7",
+      "modification": "RC-UNBLOCK01: USE_CDI=OFF, OT_VOOT_RESOURCE_SET=ON; dated source notices; unused resource files omitted",
+      "originalFrozenExecutableSha256": "B542A02195031A98C7F6B0108D09CA5F07B09D716C234A265E9D704650F50B5D",
+      "releasedRuntimeSha256": "43DEE4CF0CBEC6AA731D33C765C06F8B1C29AB32BB6E75B06225E1A26FE4A022"
+    },
+    "LAN": {
+      "commit": "1a00ec4723a1438857cf4df1797b8844c983fcb8",
+      "archive": "LAN-RC-UNBLOCK01.zip",
+      "sha256": "13F1FE4BD4242416FE25A278D107591D31E6BEDAA89B974D92FD0D3C43A9D50C",
+      "frozenExecutableSha256": "6AE1C948213BB0A501A6192CE2082FED7804DCB198886B264E24768A47EDA713",
+      "baseCommit": "1a00ec4723a1438857cf4df1797b8844c983fcb8",
+      "modification": "RC-UNBLOCK01: USE_CDI=OFF, OT_VOOT_RESOURCE_SET=ON; dated source notices; unused resource files omitted",
+      "originalFrozenExecutableSha256": "B75509A793E31E0EB58AC9870C08E1635281A1A16EE0A78FE2C7FF983D8D6811",
+      "releasedRuntimeSha256": "6AE1C948213BB0A501A6192CE2082FED7804DCB198886B264E24768A47EDA713"
+    }
+  },
+  "dependencies": {
+    "archive": "Dependencies/Flycast-vendor-source.zip",
+    "sha256": "2DBEA744CB1FED3ECFD970EEAA0D31F884A80161773CD62DCFFC357D89880C82",
+    "files": 15116
+  },
+  "status": "Runtime-only source delivery for the corrected public v0.5.0-rc.1; Experience source-scope determination remains unresolved",
+  "networkRequiredToRestore": false,
+  "notices": {
+    "archive": "Corresponding-Source-Notices.zip",
+    "sha256": "559997B483A292B3F6406348C7867A47682473BFD3D10BA375209D19CD8C999C",
+    "files": 88,
+    "requiredCoDelivery": true,
+    "purpose": "Full recovered copyright/license corpus, including MD5 MIT; supplements per-file/source notices. No code or artwork."
+  },
+  "publicBinaryZipSha256": "346DF63DA48A4579C1CF7DB4106DBDD305D337BD38DD0645630EF9F63B55D7CC",
+  "publicBinaryRelease": "https://github.com/hyp36rmax/project-ot/releases/tag/v0.5.0-rc.1",
+  "publicationScope": "Native runtime source, dependencies, notices and interoperability documentation; no private C# Experience implementation",
+  "reproducibility": "Retained builds and source-to-artifact identities verified. No second independent bit-for-bit reproduction is claimed."
+}
